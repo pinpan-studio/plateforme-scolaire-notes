@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1790688715674,
+      "tag": "0000_schema_initial",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790689547211,
+      "tag": "0001_auth_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790692000000,
+      "tag": "0002_appreciation_mot_de_passe",
+      "breakpoints": true
+    }
+  ]
+}
