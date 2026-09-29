@@ -13,16 +13,19 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
-    "test": "tsx --test tests/**/*.test.ts"
+    "test": "tsx --test tests/grading/*.test.ts tests/demo/*.test.ts tests/db/*.test.ts && vitest run",
+    "test:api": "vitest run"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "dotenv": "^18.0.4",
     "drizzle-orm": "^0.45.3",
     "next": "16.3.7",
+    "next-auth": "^5.0.0-beta.32",
     "postgres": "^3.4.9",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -35,6 +38,7 @@
     "eslint-config-next": "16.3.7",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

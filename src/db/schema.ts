@@ -369,6 +369,7 @@ export const utilisateur = pgTable(
     prenom: text("prenom").notNull(),
     nom: text("nom").notNull(),
     actif: boolean("actif").notNull().default(true),
+    sessionVersion: integer("session_version").notNull().default(0),
     ...timestamps,
   },
   (t) => [
@@ -389,6 +390,37 @@ export const utilisateur = pgTable(
     check(
       "utilisateur_role_enseignant_lie",
       sql`${t.roleCode} NOT IN ('ENSEIGNANT', 'PROFESSEUR_PRINCIPAL') OR ${t.enseignantId} IS NOT NULL`,
+    ),
+    check("utilisateur_session_version_non_negative", sql`${t.sessionVersion} >= 0`),
+  ],
+);
+
+export const journalAudit = pgTable(
+  "journal_audit",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    type: text("type").notNull(),
+    acteurId: uuid("acteur_id"),
+    identifiant: text("identifiant"),
+    resultat: text("resultat").notNull(),
+    adresseIp: text("adresse_ip"),
+    action: text("action"),
+    cibleType: text("cible_type"),
+    cibleId: uuid("cible_id"),
+    ancienneValeur: text("ancienne_valeur"),
+    nouvelleValeur: text("nouvelle_valeur"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.acteurId],
+      foreignColumns: [utilisateur.id],
+      name: "journal_audit_acteur_id_fk",
+    }).onDelete("set null"),
+    index("idx_journal_audit_created").on(t.createdAt),
+    check(
+      "journal_audit_type",
+      sql`${t.type} IN ('AUTH_SUCCES', 'AUTH_ECHEC', 'DECONNEXION', 'NOTE_CREATION', 'NOTE_MODIFICATION', 'NOTE_SUPPRESSION', 'NOTE_VALIDATION', 'AUTORISATION_REFUSEE')`,
     ),
   ],
 );
