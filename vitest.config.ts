@@ -5,6 +5,11 @@ const databaseUrl =
   process.env.TEST_DATABASE_URL ?? "postgresql://notes:notes@127.0.0.1:5432/notes_scolaires_test";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   test: {
     // Les connexions incrémentent session_version : les fichiers API partagent
     // les comptes de démo et ne doivent pas tourner en parallèle.
@@ -37,6 +42,20 @@ export default defineConfig({
             AUTH_SECRET: "test-auth-secret-at-least-32-characters",
             APP_URL: "http://localhost:3000",
           },
+        },
+      },
+      {
+        resolve: {
+          alias: {
+            "@": path.resolve(__dirname, "src"),
+          },
+        },
+        test: {
+          name: "ui",
+          environment: "jsdom",
+          setupFiles: ["./tests/ui/setup.ts"],
+          include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+          exclude: ["src/lib/grading/**"],
         },
       },
     ],

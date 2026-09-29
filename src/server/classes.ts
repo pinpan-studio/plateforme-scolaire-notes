@@ -1,24 +1,28 @@
-import { and, asc, count, eq, inArray } from "drizzle-orm";
-import { affectationEnseignant, anneeScolaire, classe, eleve, evaluation, inscription, niveau, note } from "@/db/schema";
+import { and, asc, count, eq, ilike, inArray } from "drizzle-orm";
+import { affectationEnseignant, anneeScolaire, classe, eleve, enseignant, evaluation, inscription, niveau, note } from "@/db/schema";
 import { canWriteReferential, canWriteStudents, type SessionUser } from "@/lib/auth/permissions";
+import { assertSearchRate } from "@/lib/auth/rate-limit";
 import { getDb } from "./db";
 import { ApiError, forbidden, notFound } from "./errors";
-import { optionalUuid, pagination, searchParams, versionOf } from "./query";
+import { likePattern, optionalUuid, pagination, searchParams, searchQuery, versionOf } from "./query";
 import { createClasseSchema, inscriptionSchema, parseBody, patchClasseSchema } from "./schemas";
 import { canReadClass, classIdsInScope, loadScope } from "./scope";
 
 function publicClasse(
   row: typeof classe.$inferSelect,
-  extra: { niveauCode?: string; anneeLibelle?: string; effectif?: number },
+  extra: { niveauCode?: string; anneeLibelle?: string; effectif?: number; professeurPrincipal?: string | null },
 ) {
   return {
     id: row.id,
     nom: row.nom,
     niveauId: row.niveauId,
     niveauCode: extra.niveauCode ?? null,
+    niveau: extra.niveauCode ?? null,
     anneeScolaireId: row.anneeScolaireId,
     anneeLibelle: extra.anneeLibelle ?? null,
+    annee: extra.anneeLibelle ?? null,
     professeurPrincipalId: row.professeurPrincipalId,
+    professeurPrincipal: extra.professeurPrincipal ?? null,
     effectif: extra.effectif ?? 0,
     version: versionOf(row.updatedAt),
   };
@@ -28,22 +32,29 @@ export async function listClasses(session: SessionUser, request: Request) {
   const params = searchParams(request);
   const page = pagination(params);
   const anneeScolaireId = optionalUuid(params, "anneeScolaireId");
+  const niveauId = optionalUuid(params, "niveauId");
+  const q = searchQuery(params);
+  if (q) assertSearchRate(session.id);
   const scope = await loadScope(session);
   const allowed = classIdsInScope(scope);
   if (allowed && allowed.length === 0) {
     return { data: [], page: page.page, pageSize: page.pageSize, total: 0 };
   }
-  return listClassesFiltered(page, anneeScolaireId, allowed);
+  return listClassesFiltered(page, anneeScolaireId, allowed, niveauId, q);
 }
 
 async function listClassesFiltered(
   page: { page: number; pageSize: number; offset: number },
   anneeScolaireId: string | undefined,
   allowed: string[] | null,
+  niveauId?: string,
+  q?: string,
 ) {
   const db = getDb();
   const filters = [];
   if (anneeScolaireId) filters.push(eq(classe.anneeScolaireId, anneeScolaireId));
+  if (niveauId) filters.push(eq(classe.niveauId, niveauId));
+  if (q) filters.push(ilike(classe.nom, likePattern(q)));
   if (allowed) filters.push(inArray(classe.id, allowed));
   const where = filters.length > 0 ? and(...filters) : undefined;
   const [{ total }] = await db.select({ total: count() }).from(classe).where(where);
@@ -52,10 +63,13 @@ async function listClassesFiltered(
       classe,
       niveauCode: niveau.code,
       anneeLibelle: anneeScolaire.libelle,
+      ppNom: enseignant.nom,
+      ppPrenom: enseignant.prenom,
     })
     .from(classe)
     .innerJoin(niveau, eq(classe.niveauId, niveau.id))
     .innerJoin(anneeScolaire, eq(classe.anneeScolaireId, anneeScolaire.id))
+    .leftJoin(enseignant, eq(classe.professeurPrincipalId, enseignant.id))
     .where(where)
     .orderBy(asc(classe.nom))
     .limit(page.pageSize)
@@ -67,7 +81,14 @@ async function listClassesFiltered(
       .select({ effectif: count() })
       .from(inscription)
       .where(and(eq(inscription.classeId, row.classe.id), eq(inscription.statut, "INSCRIT")));
-    data.push(publicClasse(row.classe, { niveauCode: row.niveauCode, anneeLibelle: row.anneeLibelle, effectif }));
+    data.push(
+      publicClasse(row.classe, {
+        niveauCode: row.niveauCode,
+        anneeLibelle: row.anneeLibelle,
+        effectif,
+        professeurPrincipal: row.ppNom ? `${row.ppPrenom ?? ""} ${row.ppNom}`.trim() : null,
+      }),
+    );
   }
   return { data, page: page.page, pageSize: page.pageSize, total };
 }
@@ -77,10 +98,17 @@ export async function getClasse(session: SessionUser, id: string) {
   if (!canReadClass(scope, id)) throw forbidden("Cette classe est hors de votre périmètre.");
   const db = getDb();
   const [row] = await db
-    .select({ classe, niveauCode: niveau.code, anneeLibelle: anneeScolaire.libelle })
+    .select({
+      classe,
+      niveauCode: niveau.code,
+      anneeLibelle: anneeScolaire.libelle,
+      ppNom: enseignant.nom,
+      ppPrenom: enseignant.prenom,
+    })
     .from(classe)
     .innerJoin(niveau, eq(classe.niveauId, niveau.id))
     .innerJoin(anneeScolaire, eq(classe.anneeScolaireId, anneeScolaire.id))
+    .leftJoin(enseignant, eq(classe.professeurPrincipalId, enseignant.id))
     .where(eq(classe.id, id))
     .limit(1);
   if (!row) throw notFound("Classe introuvable.");
@@ -88,7 +116,12 @@ export async function getClasse(session: SessionUser, id: string) {
     .select({ effectif: count() })
     .from(inscription)
     .where(and(eq(inscription.classeId, id), eq(inscription.statut, "INSCRIT")));
-  return publicClasse(row.classe, { niveauCode: row.niveauCode, anneeLibelle: row.anneeLibelle, effectif });
+  return publicClasse(row.classe, {
+    niveauCode: row.niveauCode,
+    anneeLibelle: row.anneeLibelle,
+    effectif,
+    professeurPrincipal: row.ppNom ? `${row.ppPrenom ?? ""} ${row.ppNom}`.trim() : null,
+  });
 }
 
 export async function createClasse(session: SessionUser, body: unknown) {

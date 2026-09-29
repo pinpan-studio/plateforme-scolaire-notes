@@ -395,6 +395,36 @@ export const utilisateur = pgTable(
   ],
 );
 
+export const appreciationGenerale = pgTable(
+  "appreciation_generale",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eleveId: uuid("eleve_id").notNull(),
+    periodeId: uuid("periode_id").notNull(),
+    texte: text("texte").notNull(),
+    auteurId: uuid("auteur_id").notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.eleveId],
+      foreignColumns: [eleve.id],
+      name: "appreciation_generale_eleve_id_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.periodeId],
+      foreignColumns: [periode.id],
+      name: "appreciation_generale_periode_id_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [t.auteurId],
+      foreignColumns: [utilisateur.id],
+      name: "appreciation_generale_auteur_id_fk",
+    }).onDelete("restrict"),
+    unique("appreciation_generale_eleve_periode_unique").on(t.eleveId, t.periodeId),
+  ],
+);
+
 export const journalAudit = pgTable(
   "journal_audit",
   {
@@ -420,7 +450,7 @@ export const journalAudit = pgTable(
     index("idx_journal_audit_created").on(t.createdAt),
     check(
       "journal_audit_type",
-      sql`${t.type} IN ('AUTH_SUCCES', 'AUTH_ECHEC', 'DECONNEXION', 'NOTE_CREATION', 'NOTE_MODIFICATION', 'NOTE_SUPPRESSION', 'NOTE_VALIDATION', 'AUTORISATION_REFUSEE')`,
+      sql`${t.type} IN ('AUTH_SUCCES', 'AUTH_ECHEC', 'DECONNEXION', 'NOTE_CREATION', 'NOTE_MODIFICATION', 'NOTE_SUPPRESSION', 'NOTE_VALIDATION', 'AUTORISATION_REFUSEE', 'MOT_DE_PASSE')`,
     ),
   ],
 );

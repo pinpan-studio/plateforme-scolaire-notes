@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import bcrypt from "bcryptjs";
-import { DEMO_PASSWORD, DEMO_PASSWORD_HASH } from "../../src/db/demo-password";
+import { DEMO_PASSWORD, DEMO_PASSWORD_HASH, DEMO_PASSWORD_HASHES } from "../../src/db/demo-password";
 import { NOMS, PRENOMS_F, PRENOMS_M, buildDemoDataset } from "../../src/db/demo/dataset";
 
 describe("jeu de démonstration", () => {
@@ -61,5 +61,14 @@ describe("jeu de démonstration", () => {
   it("reconnaît le mot de passe de démonstration", () => {
     assert.equal(bcrypt.compareSync(DEMO_PASSWORD, DEMO_PASSWORD_HASH), true);
     assert.equal(bcrypt.compareSync("autre-mot-de-passe", DEMO_PASSWORD_HASH), false);
+    const hashes = dataset.utilisateurs.map((row) => row.motDePasseHash);
+    assert.equal(new Set(hashes).size, hashes.length);
+    for (const hash of hashes) {
+      assert.ok(hash.startsWith("$2b$12$"));
+      assert.equal(bcrypt.compareSync(DEMO_PASSWORD, hash), true);
+    }
+    for (const row of dataset.utilisateurs) {
+      assert.equal(row.motDePasseHash, DEMO_PASSWORD_HASHES[row.email]);
+    }
   });
 });

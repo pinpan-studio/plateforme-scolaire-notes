@@ -69,7 +69,7 @@ export const createEleveSchema = z
     dateNaissance: dateIso,
     sexe: z.enum(["F", "M"], { error: "Sexe invalide." }),
     classeId: uuidSchema,
-    statut: z.enum(["ACTIF", "SORTI", "TRANSFERE"]).optional(),
+    statut: z.enum(["ACTIF", "SORTI", "TRANSFERE", "INSCRIT"]).optional(),
   })
   .strict();
 
@@ -79,7 +79,7 @@ export const patchEleveSchema = z
     prenom: texte(1, 80, "Le prénom").optional(),
     dateNaissance: dateIso.optional(),
     sexe: z.enum(["F", "M"], { error: "Sexe invalide." }).optional(),
-    statut: z.enum(["ACTIF", "SORTI", "TRANSFERE"]).optional(),
+    statut: z.enum(["ACTIF", "SORTI", "TRANSFERE", "INSCRIT"]).optional(),
     classeId: uuidSchema.optional(),
     version: z.string().optional(),
   })
@@ -296,6 +296,21 @@ export const createUtilisateurSchema = z
       });
     }
   });
+
+export const changementMotDePasseSchema = z
+  .object({
+    motDePasseActuel: z.string().min(1, "Le mot de passe actuel est requis."),
+    motDePasse,
+  })
+  .strict();
+
+export const appreciationGeneraleSchema = z
+  .object({
+    eleveId: uuidSchema,
+    periodeId: uuidSchema,
+    texte: z.string().trim().max(2000, "Appréciation trop longue."),
+  })
+  .strict();
 
 export const patchUtilisateurSchema = z
   .object({

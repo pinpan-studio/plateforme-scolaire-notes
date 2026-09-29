@@ -1,4 +1,5 @@
-import { and, asc, count, eq, inArray } from "drizzle-orm";
+import { randomBytes } from "node:crypto";
+import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import {
   affectationEnseignant,
   anneeScolaire,
@@ -19,10 +20,12 @@ import {
   type SessionUser,
 } from "@/lib/auth/permissions";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
+import { assertSearchRate } from "@/lib/auth/rate-limit";
 import { getDb } from "./db";
 import { ApiError, forbidden, notFound } from "./errors";
-import { optionalUuid, pagination, searchParams, versionOf } from "./query";
+import { optionalUuid, pagination, searchParams, searchQuery, versionOf } from "./query";
 import {
+  changementMotDePasseSchema,
   createAffectationSchema,
   createAnneeSchema,
   createEnseignantSchema,
@@ -37,7 +40,7 @@ import {
   patchPeriodeSchema,
   patchUtilisateurSchema,
 } from "./schemas";
-import { listAudit } from "./audit";
+import { listAudit, writeAudit } from "./audit";
 import { loadScope } from "./scope";
 
 function assertReadReferential(session: SessionUser) {
@@ -168,9 +171,20 @@ export async function listNiveaux(session: SessionUser) {
   return getDb().select().from(niveau).orderBy(asc(niveau.ordre));
 }
 
-export async function listMatieres(session: SessionUser) {
+export async function listMatieres(session: SessionUser, request?: Request) {
   const scope = await loadScope(session);
-  const rows = await getDb().select().from(matiere).orderBy(asc(matiere.nom));
+  const params = request ? searchParams(request) : new URLSearchParams();
+  const q = request ? searchQuery(params) : undefined;
+  const niveauId = request ? optionalUuid(params, "niveauId") : undefined;
+  let rows = await getDb().select().from(matiere).orderBy(asc(matiere.nom));
+  if (niveauId) rows = rows.filter((row) => row.niveauId === niveauId);
+  if (q) {
+    assertSearchRate(session.id);
+    const needle = q.toLocaleLowerCase("fr");
+    rows = rows.filter(
+      (row) => row.nom.toLocaleLowerCase("fr").includes(needle) || row.code.toLocaleLowerCase("fr").includes(needle),
+    );
+  }
   if (canReadReferential(session.role) || session.role === "CONSULTATION") return rows;
   const ids = new Set(scope.affectations.map((row) => row.matiereId));
   if (session.role === "PROFESSEUR_PRINCIPAL" && scope.classesPp.length > 0) {
@@ -308,14 +322,41 @@ export async function listAffectations(session: SessionUser, request: Request) {
   const params = searchParams(request);
   const classeId = optionalUuid(params, "classeId");
   const enseignantId = optionalUuid(params, "enseignantId");
-  const rows = await getDb().select().from(affectationEnseignant).orderBy(asc(affectationEnseignant.createdAt));
-  return rows.filter((row) => {
-    if (classeId && row.classeId !== classeId) return false;
-    if (enseignantId && row.enseignantId !== enseignantId) return false;
-    if (canReadReferential(session.role) || session.role === "CONSULTATION") return true;
-    if (scope.classesPp.includes(row.classeId)) return true;
-    return scope.affectations.some((item) => item.classeId === row.classeId && item.matiereId === row.matiereId);
-  });
+  const matiereId = optionalUuid(params, "matiereId");
+  const anneeScolaireId = optionalUuid(params, "anneeScolaireId");
+  const rows = await getDb()
+    .select({
+      affectation: affectationEnseignant,
+      enseignantNom: enseignant.nom,
+      enseignantPrenom: enseignant.prenom,
+      classeNom: classe.nom,
+      matiereNom: matiere.nom,
+      anneeLibelle: anneeScolaire.libelle,
+    })
+    .from(affectationEnseignant)
+    .innerJoin(enseignant, eq(affectationEnseignant.enseignantId, enseignant.id))
+    .innerJoin(classe, eq(affectationEnseignant.classeId, classe.id))
+    .innerJoin(matiere, eq(affectationEnseignant.matiereId, matiere.id))
+    .innerJoin(anneeScolaire, eq(affectationEnseignant.anneeScolaireId, anneeScolaire.id))
+    .orderBy(asc(affectationEnseignant.createdAt));
+  return rows
+    .filter((row) => {
+      const item = row.affectation;
+      if (classeId && item.classeId !== classeId) return false;
+      if (enseignantId && item.enseignantId !== enseignantId) return false;
+      if (matiereId && item.matiereId !== matiereId) return false;
+      if (anneeScolaireId && item.anneeScolaireId !== anneeScolaireId) return false;
+      if (canReadReferential(session.role) || session.role === "CONSULTATION") return true;
+      if (scope.classesPp.includes(item.classeId)) return true;
+      return scope.affectations.some((link) => link.classeId === item.classeId && link.matiereId === item.matiereId);
+    })
+    .map((row) => ({
+      ...row.affectation,
+      enseignant: `${row.enseignantPrenom} ${row.enseignantNom}`,
+      classe: row.classeNom,
+      matiere: row.matiereNom,
+      annee: row.anneeLibelle,
+    }));
 }
 
 export async function createAffectation(session: SessionUser, body: unknown) {
@@ -445,6 +486,7 @@ export async function updateUtilisateur(session: SessionUser, id: string, body: 
       roleCode: input.roleCode ?? current.roleCode,
       enseignantId: input.enseignantId === undefined ? current.enseignantId : input.enseignantId,
       motDePasseHash,
+      ...(input.motDePasse ? { sessionVersion: sql`${utilisateur.sessionVersion} + 1` } : {}),
     })
     .where(eq(utilisateur.id, id))
     .returning({
@@ -457,6 +499,53 @@ export async function updateUtilisateur(session: SessionUser, id: string, body: 
       actif: utilisateur.actif,
     });
   return publicUtilisateur(row);
+}
+
+export async function changerMotDePasse(session: SessionUser, body: unknown) {
+  const input = parseBody(changementMotDePasseSchema, body);
+  const db = getDb();
+  const [current] = await db.select().from(utilisateur).where(eq(utilisateur.id, session.id)).limit(1);
+  if (!current || !current.actif) throw forbidden("Compte indisponible.");
+  const ok = await verifyPassword(input.motDePasseActuel, current.motDePasseHash);
+  if (!ok) throw new ApiError(403, "FORBIDDEN", "Le mot de passe actuel est requis.");
+  await db
+    .update(utilisateur)
+    .set({ motDePasseHash: await hashPassword(input.motDePasse), sessionVersion: sql`${utilisateur.sessionVersion} + 1` })
+    .where(eq(utilisateur.id, current.id));
+  await writeAudit({
+    type: "MOT_DE_PASSE",
+    acteurId: session.id,
+    identifiant: session.email,
+    resultat: "200",
+    action: "PATCH",
+    cibleType: "utilisateur",
+    cibleId: current.id,
+  });
+}
+
+export async function definirMotDePasseTemporaire(session: SessionUser, id: string) {
+  assertWriteReferential(session);
+  const db = getDb();
+  const [current] = await db.select().from(utilisateur).where(eq(utilisateur.id, id)).limit(1);
+  if (!current) throw notFound("Utilisateur introuvable.");
+  const motDePasseTemporaire = `Tmp-${randomBytes(9).toString("base64url")}`;
+  await db
+    .update(utilisateur)
+    .set({
+      motDePasseHash: await hashPassword(motDePasseTemporaire),
+      sessionVersion: sql`${utilisateur.sessionVersion} + 1`,
+    })
+    .where(eq(utilisateur.id, id));
+  await writeAudit({
+    type: "MOT_DE_PASSE",
+    acteurId: session.id,
+    identifiant: session.email,
+    resultat: "200",
+    action: "POST",
+    cibleType: "utilisateur",
+    cibleId: id,
+  });
+  return { motDePasseTemporaire };
 }
 
 export async function readAudit(session: SessionUser) {

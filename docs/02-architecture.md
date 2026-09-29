@@ -97,7 +97,7 @@ Les comptes sont internes à l'établissement. Pas d'OAuth dans cette version.
 
 ## 5. Calcul et analyses
 
-`src/lib/grading/` est le module pur de calcul (`computePeriodReport`, `appreciate`, `rankCompetition`, `computeStatistics`, `compareTerms`). Ses tests sont `src/lib/grading/__tests__`, lancés par `npm test`. Le détail des formules est dans `src/lib/grading/README.md`.
+`src/lib/grading/` est le module pur de calcul. Il exporte `roundToCent`, `computeSubjectAverage`, `computeOverallAverage`, `computePeriodReport`, `appreciate`, `rankCompetition`, `computeStatistics`, `compareTerms` et `APPRECIATION_SCALE`. Ses tests sont `src/lib/grading/__tests__`, lancés par `npm test`. Le détail des formules est dans `src/lib/grading/README.md`.
 
 Les routes d'analyses appellent ce module. Les graphiques n'afficheront que ces séries, côté client. Pas de deuxième implémentation de la pondération dans un composant ni dans une route.
 

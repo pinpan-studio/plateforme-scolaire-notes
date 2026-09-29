@@ -1,10 +1,10 @@
-import { and, asc, count, eq } from "drizzle-orm";
-import { affectationEnseignant, anneeScolaire, classe, evaluation, matiere, note, periode } from "@/db/schema";
+import { and, asc, count, eq, ilike, inArray } from "drizzle-orm";
+import { affectationEnseignant, anneeScolaire, classe, enseignant, evaluation, inscription, matiere, note, periode } from "@/db/schema";
 import { canWriteGrades, type SessionUser } from "@/lib/auth/permissions";
-import { assertWriteRate } from "@/lib/auth/rate-limit";
+import { assertSearchRate, assertWriteRate } from "@/lib/auth/rate-limit";
 import { getDb } from "./db";
 import { ApiError, forbidden, notFound } from "./errors";
-import { optionalUuid, pagination, searchParams, versionOf } from "./query";
+import { likePattern, optionalUuid, pagination, searchParams, searchQuery, versionOf } from "./query";
 import { createEvaluationSchema, parseBody, patchEvaluationSchema } from "./schemas";
 import {
   canReadClassSubject,
@@ -32,12 +32,65 @@ function publicEvaluation(row: typeof evaluation.$inferSelect) {
   };
 }
 
+async function presentEvaluations(rows: Array<typeof evaluation.$inferSelect>) {
+  if (rows.length === 0) return [];
+  const db = getDb();
+  const classeIds = [...new Set(rows.map((row) => row.classeId))];
+  const matiereIds = [...new Set(rows.map((row) => row.matiereId))];
+  const periodeIds = [...new Set(rows.map((row) => row.periodeId))];
+  const enseignantIds = [...new Set(rows.map((row) => row.enseignantId))];
+  const evaluationIds = rows.map((row) => row.id);
+  const [classes, matieres, periodes, enseignants, saisies, effectifs] = await Promise.all([
+    db.select({ id: classe.id, nom: classe.nom, anneeScolaireId: classe.anneeScolaireId }).from(classe).where(inArray(classe.id, classeIds)),
+    db.select({ id: matiere.id, nom: matiere.nom }).from(matiere).where(inArray(matiere.id, matiereIds)),
+    db.select({ id: periode.id, libelle: periode.libelle }).from(periode).where(inArray(periode.id, periodeIds)),
+    db
+      .select({ id: enseignant.id, nom: enseignant.nom, prenom: enseignant.prenom })
+      .from(enseignant)
+      .where(inArray(enseignant.id, enseignantIds)),
+    db
+      .select({ evaluationId: note.evaluationId, total: count() })
+      .from(note)
+      .where(inArray(note.evaluationId, evaluationIds))
+      .groupBy(note.evaluationId),
+    db
+      .select({ classeId: inscription.classeId, total: count() })
+      .from(inscription)
+      .where(and(inArray(inscription.classeId, classeIds), eq(inscription.statut, "INSCRIT")))
+      .groupBy(inscription.classeId),
+  ]);
+  const classeParId = new Map(classes.map((row) => [row.id, row]));
+  const matiereParId = new Map(matieres.map((row) => [row.id, row.nom]));
+  const periodeParId = new Map(periodes.map((row) => [row.id, row.libelle]));
+  const enseignantParId = new Map(enseignants.map((row) => [row.id, `${row.prenom} ${row.nom}`]));
+  const saisiesParId = new Map(saisies.map((row) => [row.evaluationId, row.total]));
+  const effectifParClasse = new Map(effectifs.map((row) => [row.classeId, row.total]));
+  return rows.map((row) => {
+    const notesSaisies = saisiesParId.get(row.id) ?? 0;
+    return {
+      ...publicEvaluation(row),
+      classe: classeParId.get(row.classeId)?.nom ?? "",
+      matiere: matiereParId.get(row.matiereId) ?? "",
+      periode: periodeParId.get(row.periodeId) ?? "",
+      enseignant: enseignantParId.get(row.enseignantId) ?? "",
+      anneeScolaireId: classeParId.get(row.classeId)?.anneeScolaireId ?? null,
+      saisies: notesSaisies,
+      effectif: effectifParClasse.get(row.classeId) ?? 0,
+      supprimable: notesSaisies === 0,
+      motifSuppression: notesSaisies === 0 ? null : "Des notes sont déjà saisies. La suppression est impossible.",
+    };
+  });
+}
+
 export async function listEvaluations(session: SessionUser, request: Request) {
   const params = searchParams(request);
   const page = pagination(params);
   const classeId = optionalUuid(params, "classeId");
   const matiereId = optionalUuid(params, "matiereId");
   const periodeId = optionalUuid(params, "periodeId");
+  const anneeScolaireId = optionalUuid(params, "anneeScolaireId");
+  const q = searchQuery(params);
+  if (q) assertSearchRate(session.id);
   const scope = await loadScope(session);
   if (classeId && matiereId && !canReadClassSubject(scope, classeId, matiereId)) {
     return refuse(session, "GET", "evaluation", null, "Cette matière est hors de votre périmètre.");
@@ -52,15 +105,19 @@ export async function listEvaluations(session: SessionUser, request: Request) {
   if (classeId) filters.push(eq(evaluation.classeId, classeId));
   if (matiereId) filters.push(eq(evaluation.matiereId, matiereId));
   if (periodeId) filters.push(eq(evaluation.periodeId, periodeId));
+  if (anneeScolaireId) filters.push(eq(classe.anneeScolaireId, anneeScolaireId));
+  if (q) filters.push(ilike(evaluation.libelle, likePattern(q)));
   const where = filters.length > 0 ? and(...filters) : undefined;
   const rows = await db
-    .select()
+    .select({ evaluation })
     .from(evaluation)
+    .innerJoin(classe, eq(evaluation.classeId, classe.id))
     .where(where)
     .orderBy(asc(evaluation.date), asc(evaluation.libelle));
-  const visible = rows.filter((row) => canReadClassSubject(scope, row.classeId, row.matiereId));
+  const visible = rows.map((row) => row.evaluation).filter((row) => canReadClassSubject(scope, row.classeId, row.matiereId));
+  const pageRows = visible.slice(page.offset, page.offset + page.pageSize);
   return {
-    data: visible.slice(page.offset, page.offset + page.pageSize).map(publicEvaluation),
+    data: await presentEvaluations(pageRows),
     page: page.page,
     pageSize: page.pageSize,
     total: visible.length,
@@ -133,7 +190,8 @@ export async function getEvaluation(session: SessionUser, id: string) {
   if (!canReadClassSubject(scope, row.classeId, row.matiereId)) {
     return refuse(session, "GET", "evaluation", id, "Cette évaluation est hors de votre périmètre.");
   }
-  return publicEvaluation(row);
+  const [presented] = await presentEvaluations([row]);
+  return presented;
 }
 
 export async function updateEvaluation(session: SessionUser, id: string, body: unknown) {

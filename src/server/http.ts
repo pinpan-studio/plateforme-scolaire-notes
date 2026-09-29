@@ -1,9 +1,10 @@
-import { HSTS, SECURITY_HEADERS } from "@/lib/security-headers";
+import { configuredAppUrl } from "@/lib/app-url";
+import { HSTS, securityHeaders } from "@/lib/security-headers";
 import { ApiError, fromDatabase, toErrorBody } from "./errors";
 
 export function withSecurityHeaders(response: Response): Response {
   const headers = new Headers(response.headers);
-  for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+  for (const [name, value] of Object.entries(securityHeaders())) {
     if (!headers.has(name)) headers.set(name, value);
   }
   if (process.env.NODE_ENV === "production" && !headers.has("Strict-Transport-Security")) {
@@ -36,13 +37,8 @@ export function clientIp(request: Request): string {
 
 function allowedOrigins(request: Request): Set<string> {
   const origins = new Set<string>();
-  if (process.env.APP_URL) {
-    try {
-      origins.add(new URL(process.env.APP_URL).origin);
-    } catch {
-      // APP_URL invalide : aucune origine supplémentaire.
-    }
-  }
+  const configured = configuredAppUrl();
+  if (configured) origins.add(configured);
   const host = request.headers.get("host");
   if (host && /^[a-zA-Z0-9.:-]+$/.test(host)) {
     origins.add(`http://${host}`);

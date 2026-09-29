@@ -1,4 +1,5 @@
 import { decode, encode } from "@auth/core/jwt";
+import { appUsesHttps } from "@/lib/app-url";
 import { eq } from "drizzle-orm";
 import { utilisateur } from "@/db/schema";
 import { getDb } from "@/server/db";
@@ -17,7 +18,7 @@ export function authSecret(): string {
 }
 
 export function secureCookies(request?: Request): boolean {
-  if ((process.env.APP_URL ?? "").startsWith("https://")) return true;
+  if (appUsesHttps()) return true;
   return request?.headers.get("x-forwarded-proto") === "https";
 }
 

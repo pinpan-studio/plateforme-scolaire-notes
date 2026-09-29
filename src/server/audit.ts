@@ -12,6 +12,7 @@ export const AUDIT_TYPES = [
   "NOTE_SUPPRESSION",
   "NOTE_VALIDATION",
   "AUTORISATION_REFUSEE",
+  "MOT_DE_PASSE",
 ] as const;
 
 export type AuditType = (typeof AUDIT_TYPES)[number];

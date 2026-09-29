@@ -3,7 +3,7 @@ import { classe, eleve, inscription, note } from "@/db/schema";
 import { canWriteStudents, type SessionUser } from "@/lib/auth/permissions";
 import { getDb } from "./db";
 import { ApiError, forbidden, notFound } from "./errors";
-import { assertVersion, likePattern, pagination, searchParams, searchQuery, sortOrder, versionOf } from "./query";
+import { assertVersion, likePattern, optionalUuid, pagination, searchParams, searchQuery, sortOrder, versionOf } from "./query";
 import { assertSearchRate } from "@/lib/auth/rate-limit";
 import { createEleveSchema, parseBody, patchEleveSchema } from "./schemas";
 import { canReadClass, classIdsInScope, loadScope } from "./scope";
@@ -12,6 +12,14 @@ function inscriptionStatut(statut: string) {
   if (statut === "SORTI") return "SORTI" as const;
   if (statut === "TRANSFERE") return "TRANSFERE" as const;
   return "INSCRIT" as const;
+}
+
+/** L'interface parle d'inscription (`INSCRIT`). La fiche élève stocke `ACTIF`. */
+function statutFiche(statut: string | undefined, courant: string): "ACTIF" | "SORTI" | "TRANSFERE" {
+  if (statut === "SORTI" || statut === "TRANSFERE") return statut;
+  if (statut === "ACTIF" || statut === "INSCRIT") return "ACTIF";
+  if (courant === "SORTI" || courant === "TRANSFERE") return courant;
+  return "ACTIF";
 }
 
 function publicEleve(
@@ -78,7 +86,8 @@ export async function listEleves(session: SessionUser, request: Request) {
       })()
     : undefined;
   const statut = params.get("statut");
-  if (statut && !["ACTIF", "SORTI", "TRANSFERE"].includes(statut)) {
+  const anneeScolaireId = optionalUuid(params, "anneeScolaireId");
+  if (statut && !["ACTIF", "INSCRIT", "SORTI", "TRANSFERE"].includes(statut)) {
     throw new ApiError(422, "VALIDATION", "Statut invalide.", [{ path: "statut", message: "Statut inconnu." }]);
   }
   const { sort, order } = sortOrder(params, ["nom", "prenom", "matricule"], "nom");
@@ -90,13 +99,19 @@ export async function listEleves(session: SessionUser, request: Request) {
 
   const db = getDb();
   const filters = [];
-  if (statut) filters.push(eq(eleve.statut, statut));
   if (q) {
     const pattern = likePattern(q);
     filters.push(or(ilike(eleve.nom, pattern), ilike(eleve.prenom, pattern), ilike(eleve.matricule, pattern))!);
   }
-  const needsJoin = Boolean(parsedClasse) || allowed !== null;
+  let needsJoin = Boolean(parsedClasse) || allowed !== null || Boolean(anneeScolaireId);
   if (parsedClasse) filters.push(eq(inscription.classeId, parsedClasse));
+  if (anneeScolaireId) filters.push(eq(inscription.anneeScolaireId, anneeScolaireId));
+  if (statut === "INSCRIT" || statut === "SORTI" || statut === "TRANSFERE") {
+    filters.push(eq(inscription.statut, statut));
+    needsJoin = true;
+  } else if (statut === "ACTIF") {
+    filters.push(eq(eleve.statut, "ACTIF"));
+  }
   if (allowed) {
     if (allowed.length === 0) {
       return { data: [], page: page.page, pageSize: page.pageSize, total: 0 };
@@ -192,7 +207,7 @@ export async function createEleve(session: SessionUser, body: unknown) {
   const db = getDb();
   const [classeRow] = await db.select().from(classe).where(eq(classe.id, input.classeId)).limit(1);
   if (!classeRow) throw notFound("Classe introuvable.");
-  const statut = input.statut ?? "ACTIF";
+  const statut = input.statut === "SORTI" || input.statut === "TRANSFERE" ? input.statut : "ACTIF";
   const created = await db.transaction(async (tx) => {
     const [student] = await tx
       .insert(eleve)
@@ -226,7 +241,7 @@ export async function updateEleve(session: SessionUser, id: string, body: unknow
   const [current] = await db.select().from(eleve).where(eq(eleve.id, id)).limit(1);
   if (!current) throw notFound("Élève introuvable.");
   assertVersion(current.updatedAt, input.version);
-  const statut = input.statut ?? current.statut;
+  const statut = statutFiche(input.statut, current.statut);
 
   return db.transaction(async (tx) => {
     const [student] = await tx

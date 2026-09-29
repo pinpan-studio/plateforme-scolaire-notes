@@ -12,8 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    // Config CommonJS autonome du module de calcul, chargée par Vitest sans le projet.
+    // Config Vitest du module de calcul, volontairement en CommonJS et chargée hors du projet.
     "src/lib/grading/vitest.config.ts",
+    "playwright-report/**",
+    "test-results/**",
   ]),
 ]);
 

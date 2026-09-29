@@ -1,4 +1,4 @@
-import { DEMO_PASSWORD_HASH } from "../demo-password";
+import { DEMO_PASSWORD_HASHES } from "../demo-password";
 
 export const PRENOMS_F = [
   "Camille",
@@ -462,7 +462,7 @@ export function buildDemoDataset() {
     {
       id: id(),
       email: "admin@tilleuls.demo",
-      motDePasseHash: DEMO_PASSWORD_HASH,
+      motDePasseHash: DEMO_PASSWORD_HASHES["admin@tilleuls.demo"],
       roleCode: "ADMIN",
       enseignantId: null as string | null,
       prenom: "Alex",
@@ -472,7 +472,7 @@ export function buildDemoDataset() {
     {
       id: id(),
       email: "direction@tilleuls.demo",
-      motDePasseHash: DEMO_PASSWORD_HASH,
+      motDePasseHash: DEMO_PASSWORD_HASHES["direction@tilleuls.demo"],
       roleCode: "DIRECTION",
       enseignantId: null,
       prenom: "Dominique",
@@ -482,7 +482,7 @@ export function buildDemoDataset() {
     {
       id: id(),
       email: nathan.email,
-      motDePasseHash: DEMO_PASSWORD_HASH,
+      motDePasseHash: DEMO_PASSWORD_HASHES[nathan.email],
       roleCode: "ENSEIGNANT",
       enseignantId: nathan.id,
       prenom: nathan.prenom,
@@ -492,7 +492,7 @@ export function buildDemoDataset() {
     {
       id: id(),
       email: camille.email,
-      motDePasseHash: DEMO_PASSWORD_HASH,
+      motDePasseHash: DEMO_PASSWORD_HASHES[camille.email],
       roleCode: "PROFESSEUR_PRINCIPAL",
       enseignantId: camille.id,
       prenom: camille.prenom,
@@ -502,7 +502,7 @@ export function buildDemoDataset() {
     {
       id: id(),
       email: "consultation@tilleuls.demo",
-      motDePasseHash: DEMO_PASSWORD_HASH,
+      motDePasseHash: DEMO_PASSWORD_HASHES["consultation@tilleuls.demo"],
       roleCode: "CONSULTATION",
       enseignantId: null,
       prenom: "Charlie",
