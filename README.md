@@ -1,10 +1,12 @@
 # Cahier de notes
 
-Saisie, consultation et analyse des notes d'un collège. Cette branche couvre l'analyse, l'architecture, la base PostgreSQL, l'authentification et l'API. Les écrans suivent.
+Saisie, consultation et analyse des notes d'un collège. L'interface et l'API partagent cette branche. Le calcul des moyennes passe par `src/lib/grading/`.
 
 - [Analyse fonctionnelle](docs/01-analyse-fonctionnelle.md)
 - [Architecture](docs/02-architecture.md)
 - [API](docs/03-api.md)
+- [Déploiement](docs/deploiement.md)
+- [Audit de sécurité](docs/security/audit.md)
 
 ## Prérequis
 
@@ -31,6 +33,8 @@ npm run dev
 
 `db:migrate` applique les migrations Drizzle puis les triggers (`drizzle/triggers.sql`) sur une base vide. `db:seed` remplace les données métier par le jeu de démonstration. Il refuse de tourner si `NODE_ENV=production`, sauf avec `SEED_CONFIRM=oui`.
 
+`npm test` migre et réensemence `DATABASE_URL` (à défaut, `postgresql://notes:notes@127.0.0.1:5432/notes_scolaires`) avant les tests Node, puis Vitest utilise `notes_scolaires_test`.
+
 Aucun secret réel n'est versionné. `.env` reste local.
 
 ## Comptes de démonstration
@@ -45,7 +49,7 @@ Mot de passe commun, réservé à la démo : `Demo-2026!`
 | camille.martin@tilleuls.demo | PROFESSEUR_PRINCIPAL (6e A) |
 | consultation@tilleuls.demo | CONSULTATION |
 
-Le hash bcrypt est fixe dans `src/db/demo-password.ts` pour que le seed soit déterministe.
+Chaque compte de démonstration a son propre hachage bcrypt (coût 12) dans `src/db/demo-password.ts`, pour que le seed reste déterministe.
 
 ## Jeu de données
 
@@ -61,5 +65,7 @@ Collège Les Tilleuls : 1 établissement, années 2024-2025 (close) et 2025-2026
 | `npm run db:generate` | Génère une migration depuis le schéma |
 | `npm run db:migrate` | Applique le SQL |
 | `npm run db:seed` | Charge la démo |
-| `npm test` | Calcul, contraintes SQL, puis tests API |
+| `npm test` | Contraintes SQL, module de calcul, puis Vitest (API et interface) |
 | `npm run test:api` | Tests API Vitest sur `notes_scolaires_test` |
+| `npm run test:ui` | Tests de composants |
+| `npm run test:e2e` | Parcours Playwright (serveur local + base `notes_scolaires`) |
