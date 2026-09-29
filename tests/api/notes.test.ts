@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { anneeScolaire, note } from "@/db/schema";
-import { moyenneMatiere } from "@/lib/grading";
+import { computeSubjectAverage } from "@/lib/grading";
 import { getDb } from "@/server/db";
 import { GET as getEvaluations, POST as postEvaluations } from "@/app/api/evaluations/route";
 import { DELETE as deleteEvaluation, PATCH as patchEvaluation } from "@/app/api/evaluations/[id]/route";
@@ -255,7 +255,7 @@ describe("notes et autorisations", () => {
       .from(note)
       .where(eq(note.eleveId, eleveId));
     expect(brut.length).toBeGreaterThan(0);
-    expect(moyenneMatiere).toBeTypeOf("function");
+    expect(computeSubjectAverage).toBeTypeOf("function");
 
     const supprNote = await call(deleteNote, `/api/notes/${noteZero.id}`, {
       method: "DELETE",

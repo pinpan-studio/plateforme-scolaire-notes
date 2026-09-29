@@ -13,7 +13,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
-    "test": "tsx --test tests/grading/*.test.ts tests/demo/*.test.ts tests/db/*.test.ts && vitest run",
+    "test": "tsx --test tests/demo/*.test.ts tests/db/*.test.ts && vitest run",
     "test:api": "vitest run"
   },
   "dependencies": {

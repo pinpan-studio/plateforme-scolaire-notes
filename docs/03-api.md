@@ -232,7 +232,7 @@ Une ligne peut porter son propre `evaluationId`. Si l'une sort du périmètre, t
 
 ### Bulletins et analyses
 
-Calculés à la lecture, sur les notes PostgreSQL, via `moyenneMatiere`, `moyenneGenerale`, `classer`, `appreciationPourMoyenne` et `roundHalfUp`.
+Calculés à la lecture, sur les notes PostgreSQL, uniquement par `src/lib/grading` : `computePeriodReport` (moyennes de matières puis moyenne générale), `appreciate`, `rankCompetition`, `computeStatistics` et `compareTerms`. Aucune formule n'est recodée dans les routes.
 
 | Méthode | Route | Contenu |
 | --- | --- | --- |
@@ -243,9 +243,9 @@ Calculés à la lecture, sur les notes PostgreSQL, via `moyenneMatiere`, `moyenn
 | GET | `/api/analyses/temporelle?eleveId` ou `classeId` | un point par trimestre |
 | GET | `/api/analyses/etablissement?anneeScolaireId&periodeId` | moyennes par classe et de l'établissement |
 
-Un enseignant reçoit les matières de ses affectations, sans moyenne générale ni rang calculés sur les autres matières. Le professeur principal de la classe reçoit le bulletin complet. Le rang est le rang concours de `src/lib/grading` (1, 1, 3), celui de l'analyse fonctionnelle.
+Un enseignant reçoit les matières de ses affectations, sans moyenne générale ni rang calculés sur les autres matières. Le professeur principal de la classe reçoit le bulletin complet. Le rang est `rankCompetition` : les moyennes publiées au même centième sont ex æquo et le rang suivant est sauté (1, 1, 3 si l'égalité est en tête ; 1, 2, 2, 4 si elle est en deuxième place).
 
-Statistiques : effectif, nombre de moyennes calculables, moyenne de classe (arrondi half-up des moyennes déjà publiées), minimum, maximum, part sous 10, tranches `[0;10[`, `[10;12[`, `[12;14[`, `[14;16[`, `[16;20]`.
+Statistiques : `computeStatistics` sur les moyennes déjà publiées. La réponse expose l'effectif, le nombre de moyennes calculables, la moyenne de classe, le minimum, le maximum, la médiane, le taux de réussite (≥ 10) et la distribution des six mentions du module. L'analyse temporelle ajoute `comparaison`, le résultat de `compareTerms` (écarts, tendance, plus haut et plus bas trimestre). L'analyse matière ajoute le rang dans la matière.
 
 ### Audit et santé
 
@@ -286,7 +286,7 @@ Aucune origine CORS n'est reflétée : l'API est same-origin. Une écriture dont
 Le plan QA et la checklist ont été rédigés avant le modèle figé. Là où ils divergent, l'analyse et le schéma priment :
 
 - Rôles réels : `ADMIN`, `DIRECTION`, `ENSEIGNANT`, `PROFESSEUR_PRINCIPAL`, `CONSULTATION`. Pas de rôle élève ni de scolarité. La direction lit les notes et ne les modifie pas. Seul l'administrateur inscrit les élèves.
-- Rang concours `1, 1, 3` (`classer`), pas `1, 2, 2, 4`.
+- Le classement est celui de `rankCompetition` (rang de compétition). L'exemple 1, 1, 3 de l'analyse et l'exemple 1, 2, 2, 4 du module décrivent la même règle : l'ex æquo partage le rang, le suivant est sauté.
 - Les notes sont ramenées sur 20 avant la moyenne de matière, comme le module de calcul.
 - Pas d'historique de valeurs autre que le journal d'audit (ancienne et nouvelle valeur). Pas de table d'audit modifiable.
 - Le seed de démo partage un hash bcrypt de coût 10. Les mots de passe créés ensuite sont au coût 12, sels distincts.

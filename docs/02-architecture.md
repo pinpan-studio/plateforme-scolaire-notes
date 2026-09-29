@@ -97,9 +97,9 @@ Les comptes sont internes à l'établissement. Pas d'OAuth dans cette version.
 
 ## 5. Calcul et analyses
 
-`src/lib/grading/` exporte `moyenneMatiere`, `moyenneGenerale`, `classer`, `appreciationPourMoyenne`. Fonctions pures, couvertes par `tests/grading`.
+`src/lib/grading/` est le module pur de calcul (`computePeriodReport`, `appreciate`, `rankCompetition`, `computeStatistics`, `compareTerms`). Ses tests sont `src/lib/grading/__tests__`, lancés par `npm test`. Le détail des formules est dans `src/lib/grading/README.md`.
 
-Les analyses (distribution, moyenne de classe, part sous 10, comparaison de matières) seront des fonctions de `src/lib/analytics/` qui consomment ces résultats. Les graphiques Recharts n'afficheront que ces séries, côté client. Pas de deuxième implémentation de la pondération dans le composant.
+Les routes d'analyses appellent ce module. Les graphiques n'afficheront que ces séries, côté client. Pas de deuxième implémentation de la pondération dans un composant ni dans une route.
 
 ## 6. Déploiement
 

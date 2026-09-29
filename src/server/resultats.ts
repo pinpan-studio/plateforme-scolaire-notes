@@ -11,16 +11,20 @@ import {
   periode,
 } from "@/db/schema";
 import {
-  appreciationPourMoyenne,
-  classer,
-  moyenneGenerale,
-  moyenneMatiere,
-  roundHalfUp,
-  type NoteSaisie,
+  appreciate,
+  compareTerms,
+  computePeriodReport,
+  computeStatistics,
+  GradingError,
+  rankCompetition,
+  type GradeInput,
+  type PeriodReport,
+  type SubjectInput,
+  type TermSnapshot,
 } from "@/lib/grading";
 import { canReadEstablishmentDashboard, type SessionUser } from "@/lib/auth/permissions";
 import { getDb } from "./db";
-import { forbidden, notFound } from "./errors";
+import { ApiError, forbidden, notFound } from "./errors";
 import { optionalUuid, requireUuid, searchParams } from "./query";
 import { canReadClass, canReadClassSubject, loadScope, refuse, subjectIdsForClass } from "./scope";
 
@@ -41,13 +45,44 @@ type GradeRow = {
 
 type Inscrit = { eleveId: string; nom: string; prenom: string; matricule: string };
 
-function toSaisies(rows: GradeRow[]): NoteSaisie[] {
+type SubjectRef = { matiereId: string; nom: string; code: string; coefficient: number };
+
+function rethrowGrading(error: unknown): never {
+  if (error instanceof GradingError) {
+    throw new ApiError(422, "VALIDATION", error.message);
+  }
+  throw error;
+}
+
+function toGrades(rows: GradeRow[]): GradeInput[] {
   return rows.map((row) => ({
-    valeur: row.valeur,
-    absent: row.estAbsent,
-    noteMax: row.noteMax,
+    score: row.estAbsent ? 0 : Number(row.valeur),
+    maxScore: row.noteMax,
     coefficient: row.coefficientEvaluation,
+    absent: row.estAbsent,
   }));
+}
+
+function periodReport(subjects: SubjectRef[], rows: GradeRow[], eleveId: string): PeriodReport {
+  const input: SubjectInput[] = subjects.map((subject) => ({
+    id: subject.matiereId,
+    coefficient: subject.coefficient,
+    grades: toGrades(rows.filter((row) => row.eleveId === eleveId && row.matiereId === subject.matiereId)),
+  }));
+  try {
+    return computePeriodReport(input);
+  } catch (error) {
+    rethrowGrading(error);
+  }
+}
+
+function mention(value: number | null): string {
+  if (value === null) return "Non noté";
+  try {
+    return appreciate(value).label;
+  } catch (error) {
+    rethrowGrading(error);
+  }
 }
 
 async function inscritsDeClasse(classeId: string): Promise<Inscrit[]> {
@@ -104,41 +139,35 @@ async function notesDeClasse(classeId: string, filtre: { periodeId?: string; mat
     .where(and(...filters));
 }
 
-function ligneMatiere(subject: { matiereId: string; nom: string; code: string; coefficient: number }, rows: GradeRow[]) {
-  const moyenne = moyenneMatiere(toSaisies(rows));
-  return {
-    matiereId: subject.matiereId,
-    code: subject.code,
-    nom: subject.nom,
-    coefficient: subject.coefficient,
-    moyenne,
-    appreciation: appreciationPourMoyenne(moyenne),
-  };
-}
-
-function syntheseClasse(students: Inscrit[], subjects: Array<{ matiereId: string; nom: string; code: string; coefficient: number }>, rows: GradeRow[]) {
+function syntheseClasse(students: Inscrit[], subjects: SubjectRef[], rows: GradeRow[]) {
   const lignes = students.map((student) => {
-    const matieres = subjects.map((subject) =>
-      ligneMatiere(
-        subject,
-        rows.filter((row) => row.eleveId === student.eleveId && row.matiereId === subject.matiereId),
-      ),
-    );
-    const generale = moyenneGenerale(
-      matieres.map((item) => ({
-        matiereId: item.matiereId,
-        coefficient: item.coefficient,
-        moyenne: item.moyenne,
-      })),
-    );
+    const report = periodReport(subjects, rows, student.eleveId);
+    const matieres = subjects.map((subject) => {
+      const moyenne = report.subjects.find((item) => item.id === subject.matiereId)?.average.value ?? null;
+      return {
+        matiereId: subject.matiereId,
+        code: subject.code,
+        nom: subject.nom,
+        coefficient: subject.coefficient,
+        moyenne,
+        appreciation: mention(moyenne),
+      };
+    });
     return {
       ...student,
       matieres,
-      moyenneGenerale: generale,
-      appreciation: appreciationPourMoyenne(generale),
+      moyenneGenerale: report.overall.value,
+      appreciation: mention(report.overall.value),
     };
   });
-  const rangs = classer(lignes.map((ligne) => ({ eleveId: ligne.eleveId, moyenne: ligne.moyenneGenerale })));
+  const ranked = (() => {
+    try {
+      return rankCompetition(lignes, (ligne) => ligne.moyenneGenerale);
+    } catch (error) {
+      rethrowGrading(error);
+    }
+  })();
+  const rangs = new Map(ranked.map((entry) => [entry.item.eleveId, entry.rank]));
   return lignes
     .map((ligne) => ({ ...ligne, rang: rangs.get(ligne.eleveId) ?? null }))
     .sort((a, b) => {
@@ -151,23 +180,27 @@ function syntheseClasse(students: Inscrit[], subjects: Array<{ matiereId: string
 
 function statistiques(lignes: Array<{ moyenneGenerale: number | null }>) {
   const valeurs = lignes.map((ligne) => ligne.moyenneGenerale).filter((valeur): valeur is number => valeur !== null);
-  const moyenneClasse = valeurs.length === 0 ? null : roundHalfUp(valeurs.reduce((sum, valeur) => sum + valeur, 0) / valeurs.length);
-  const sous10 = valeurs.filter((valeur) => valeur < 10).length;
-  const tranches = [
-    { min: 0, max: 10, effectif: valeurs.filter((valeur) => valeur >= 0 && valeur < 10).length },
-    { min: 10, max: 12, effectif: valeurs.filter((valeur) => valeur >= 10 && valeur < 12).length },
-    { min: 12, max: 14, effectif: valeurs.filter((valeur) => valeur >= 12 && valeur < 14).length },
-    { min: 14, max: 16, effectif: valeurs.filter((valeur) => valeur >= 14 && valeur < 16).length },
-    { min: 16, max: 20, effectif: valeurs.filter((valeur) => valeur >= 16 && valeur <= 20).length },
-  ];
+  let stats: ReturnType<typeof computeStatistics> = null;
+  try {
+    stats = computeStatistics(valeurs);
+  } catch (error) {
+    rethrowGrading(error);
+  }
   return {
     effectif: lignes.length,
-    calculables: valeurs.length,
-    moyenneClasse,
-    minimum: valeurs.length ? Math.min(...valeurs) : null,
-    maximum: valeurs.length ? Math.max(...valeurs) : null,
-    partSous10: valeurs.length === 0 ? null : roundHalfUp((sous10 / valeurs.length) * 100),
-    tranches,
+    calculables: stats?.count ?? 0,
+    moyenneClasse: stats?.average ?? null,
+    minimum: stats?.min ?? null,
+    maximum: stats?.max ?? null,
+    mediane: stats?.median ?? null,
+    tauxReussite: stats?.passRatePercent ?? null,
+    distribution: (stats?.distribution ?? []).map((band) => ({
+      code: band.code,
+      libelle: band.label,
+      min: band.min,
+      max: band.max,
+      effectif: band.count,
+    })),
   };
 }
 
@@ -296,6 +329,7 @@ export async function analyseMatiere(session: SessionUser, request: Request) {
       matricule: ligne.matricule,
       moyenne: ligne.matieres[0]?.moyenne ?? null,
       appreciation: ligne.matieres[0]?.appreciation ?? "Non noté",
+      rang: ligne.rang,
     })),
     statistiques: {
       ...statistiques(moyennes.map((moyenne) => ({ moyenneGenerale: moyenne }))),
@@ -331,6 +365,7 @@ export async function analyseTemporelle(session: SessionUser, request: Request) 
     .where(eq(periode.anneeScolaireId, classeRow.anneeScolaireId))
     .orderBy(asc(periode.ordre));
   const points = [];
+  const snapshots: TermSnapshot[] = [];
   for (const item of periodes) {
     const url = new URL(request.url);
     url.searchParams.set("classeId", targetClass);
@@ -339,6 +374,7 @@ export async function analyseTemporelle(session: SessionUser, request: Request) 
     const fake = new Request(url);
     if (eleveId) {
       const detail = await bulletin(session, fake);
+      snapshots.push({ id: item.id, label: item.libelle, average: detail.moyenneGenerale });
       points.push({
         periodeId: item.id,
         libelle: item.libelle,
@@ -349,6 +385,7 @@ export async function analyseTemporelle(session: SessionUser, request: Request) 
       });
     } else {
       const detail = await analyseClasse(session, fake);
+      snapshots.push({ id: item.id, label: item.libelle, average: detail.statistiques.moyenneClasse });
       points.push({
         periodeId: item.id,
         libelle: item.libelle,
@@ -357,7 +394,13 @@ export async function analyseTemporelle(session: SessionUser, request: Request) 
       });
     }
   }
-  return { classeId: targetClass, eleveId: eleveId ?? null, periodes: points };
+  let comparaison: ReturnType<typeof compareTerms>;
+  try {
+    comparaison = compareTerms(snapshots);
+  } catch (error) {
+    rethrowGrading(error);
+  }
+  return { classeId: targetClass, eleveId: eleveId ?? null, periodes: points, comparaison };
 }
 
 export async function analyseEtablissement(session: SessionUser, request: Request) {
