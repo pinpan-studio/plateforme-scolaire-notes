@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Config Vitest du module de calcul, volontairement en CommonJS.
+    "src/lib/grading/vitest.config.ts",
   ]),
 ]);
 
