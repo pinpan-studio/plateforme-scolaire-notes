@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+:root {
+  --primary: #1d4ed8;
+  --surface: #f8fafc;
+  --card: #ffffff;
+  --ink: #0f172a;
+  --muted: #475569;
+  --border: #e2e8f0;
+  --success: #15803d;
+  --warning: #a16207;
+  --danger: #b91c1c;
+}
+
+@theme inline {
+  --color-primary: var(--primary);
+  --color-surface: var(--surface);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --font-sans: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+@page {
+  size: A4 portrait;
+  margin: 12mm;
+}
+
+@media print {
+  .app-chrome {
+    display: none !important;
+  }
+
+  body {
+    background: white;
+  }
+}
