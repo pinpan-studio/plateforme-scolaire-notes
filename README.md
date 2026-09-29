@@ -1,9 +1,10 @@
 # Cahier de notes
 
-Saisie, consultation et analyse des notes d'un collège. Cette branche couvre l'analyse fonctionnelle, l'architecture et la base PostgreSQL. Les écrans, l'API, l'authentification et le déploiement Vercel suivent.
+Saisie, consultation et analyse des notes d'un collège. Cette branche couvre l'analyse, l'architecture, la base PostgreSQL, l'authentification et l'API. Les écrans suivent.
 
 - [Analyse fonctionnelle](docs/01-analyse-fonctionnelle.md)
 - [Architecture](docs/02-architecture.md)
+- [API](docs/03-api.md)
 
 ## Prérequis
 
@@ -60,4 +61,5 @@ Collège Les Tilleuls : 1 établissement, années 2024-2025 (close) et 2025-2026
 | `npm run db:generate` | Génère une migration depuis le schéma |
 | `npm run db:migrate` | Applique le SQL |
 | `npm run db:seed` | Charge la démo |
-| `npm test` | Tests de calcul et de contraintes |
+| `npm test` | Calcul, contraintes SQL, puis tests API |
+| `npm run test:api` | Tests API Vitest sur `notes_scolaires_test` |
