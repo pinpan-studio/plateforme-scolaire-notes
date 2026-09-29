@@ -1,21 +1,19 @@
 import type { Metadata } from "next";
-import { Geist } from "next/font/google";
+import type { ReactNode } from "react";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "Cahier de notes",
+  title: {
+    default: "Cahier de notes",
+    template: "%s — Cahier de notes",
+  },
   description: "Saisie, consultation et analyse des notes des élèves.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="fr" className={`${geistSans.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col">{children}</body>
+    <html lang="fr" className="h-full antialiased">
+      <body className="min-h-full">{children}</body>
     </html>
   );
 }
