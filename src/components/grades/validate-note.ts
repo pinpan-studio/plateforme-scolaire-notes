@@ -6,7 +6,7 @@ export type SaisieLigne = {
   commentaire: string;
 };
 
-/** Validation d'affichage. Les moyennes restent calculées par l'API. */
+/** Validation de saisie. La moyenne affichée passe par le module de calcul. */
 export function validerNote(ligne: SaisieLigne, noteMax: number): string | null {
   if (ligne.absent) {
     return null;

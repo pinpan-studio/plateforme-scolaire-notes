@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SaisieNotes } from "@/components/grades/saisie-notes";
 import type { GrilleNotes, LigneGrille } from "@/lib/api-client/types";
+import { appreciate, computeSubjectAverage } from "@/lib/grading";
+import { formatMoyenne } from "@/lib/format";
 
 const eleves: LigneGrille[] = [
   { eleveId: "1", matricule: "A1", nom: "Martin", prenom: "Camille", valeur: null, absent: false, commentaire: null },
@@ -36,6 +38,13 @@ function grille(peutModifier = true): GrilleNotes {
       motifSuppression: null,
     },
   };
+}
+
+function libelleApercu(valeur: number | null): string {
+  if (valeur === null) {
+    return "Aperçu de la moyenne : — · Non évalué";
+  }
+  return `Aperçu de la moyenne : ${formatMoyenne(valeur)} · ${appreciate(valeur).label}`;
 }
 
 describe("grille de saisie", () => {
@@ -109,6 +118,45 @@ describe("grille de saisie", () => {
     expect(onEnregistrer).toHaveBeenCalledWith([
       { eleveId: "1", valeur: 15, absent: false, commentaire: null, supprimer: false },
     ]);
+  });
+
+  it("affiche l'aperçu calculé par le module, absences et barème compris", async () => {
+    const user = userEvent.setup();
+    render(<SaisieNotes grille={grille()} onEnregistrer={vi.fn()} />);
+    expect(screen.getByText("Aperçu de la moyenne : — · Non évalué")).toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox", { name: "Note de Martin Camille" }), "15");
+    await user.type(screen.getByRole("textbox", { name: "Note de Durand Léa" }), "12");
+    const deuxNotes = computeSubjectAverage([
+      { score: 15, maxScore: 20, coefficient: 2 },
+      { score: 12, maxScore: 20, coefficient: 2 },
+    ]);
+    expect(screen.getByText(libelleApercu(deuxNotes.value))).toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: "Absent — Durand Léa" }));
+    const sansAbsence = computeSubjectAverage([
+      { score: 15, maxScore: 20, coefficient: 2 },
+      { score: 0, maxScore: 20, coefficient: 2, absent: true },
+    ]);
+    expect(screen.getByText(libelleApercu(sansAbsence.value))).toBeInTheDocument();
+  });
+
+  it("ramène l'aperçu sur 20 quand le barème n'est pas 20", async () => {
+    const user = userEvent.setup();
+    const source = grille();
+    render(
+      <SaisieNotes
+        grille={{ ...source, evaluation: { ...source.evaluation, noteMax: 10, coefficient: 1 } }}
+        onEnregistrer={vi.fn()}
+      />,
+    );
+    await user.type(screen.getByRole("textbox", { name: "Note de Martin Camille" }), "8");
+    await user.type(screen.getByRole("textbox", { name: "Note de Durand Léa" }), "5");
+    const resultat = computeSubjectAverage([
+      { score: 8, maxScore: 10, coefficient: 1 },
+      { score: 5, maxScore: 10, coefficient: 1 },
+    ]);
+    expect(screen.getByText(libelleApercu(resultat.value))).toBeInTheDocument();
   });
 
   it("reste en lecture seule sans champ éditable", () => {

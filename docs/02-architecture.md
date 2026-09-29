@@ -97,7 +97,7 @@ Les comptes sont internes à l'établissement. Pas d'OAuth dans cette version.
 
 ## 5. Calcul et analyses
 
-`src/lib/grading/` exporte `moyenneMatiere`, `moyenneGenerale`, `classer`, `appreciationPourMoyenne`. Fonctions pures, couvertes par `tests/grading`.
+`src/lib/grading/` exporte `roundToCent`, `computeSubjectAverage`, `computeOverallAverage`, `computePeriodReport`, `rankCompetition`, `appreciate` et `APPRECIATION_SCALE`. Fonctions pures, couvertes par `src/lib/grading/__tests__`.
 
 Les analyses (distribution, moyenne de classe, part sous 10, comparaison de matières) seront des fonctions de `src/lib/analytics/` qui consomment ces résultats. Les graphiques Recharts n'afficheront que ces séries, côté client. Pas de deuxième implémentation de la pondération dans le composant.
 

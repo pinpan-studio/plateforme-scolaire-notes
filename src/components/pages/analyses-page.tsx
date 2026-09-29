@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { api } from "@/lib/api-client";
+import { PASS_MARK } from "@/lib/grading";
 import { formatMoyenne } from "@/lib/format";
 import { useApiData } from "@/components/data/use-api-data";
 import { QueryGate } from "@/components/data/query-gate";
@@ -24,7 +25,7 @@ export function AnalysesPage() {
   const distribution = useApiData(`dist-${cle}`, () => api.distribution(filtres));
   const moyennes = useApiData(`moy-${cle}`, () => api.moyennesMatieres(filtres));
   const evolution = useApiData(`evo-${anneeId ?? ""}-${classeId}`, () => api.evolution({ anneeId, classeId: classeId || undefined }));
-  const sousSeuil = useApiData(`seuil-${cle}`, () => api.sousSeuil({ ...filtres, seuil: 10 }));
+  const sousSeuil = useApiData(`seuil-${cle}`, () => api.sousSeuil({ ...filtres, seuil: PASS_MARK }));
 
   const barresDistribution = (distribution.data?.tranches ?? []).map((tranche) => ({
     libelle: tranche.libelle,
@@ -44,7 +45,7 @@ export function AnalysesPage() {
 
   return (
     <div className="space-y-8">
-      <PageHeader titre="Analyses" description="Distributions, moyennes et élèves sous 10/20." />
+      <PageHeader titre="Analyses" description={`Distributions, moyennes et élèves sous ${PASS_MARK}/20.`} />
       <div className="flex flex-wrap gap-3">
         <FiltreSelect id="periode-analyses" label="Période" value={periodeId} onChange={setPeriodeId} options={(periodes.data ?? []).map((periode) => ({ value: periode.id, label: periode.libelle }))} tousLabel="Année entière" />
         <FiltreSelect id="classe-analyses" label="Classe" value={classeId} onChange={setClasseId} options={(classes.data?.items ?? []).map((classe) => ({ value: classe.id, label: classe.nom }))} />
@@ -77,10 +78,10 @@ export function AnalysesPage() {
         </QueryGate>
       </section>
       <section>
-        <h2 className="text-lg font-semibold">Élèves sous 10/20</h2>
+        <h2 className="text-lg font-semibold">Élèves sous {PASS_MARK}/20</h2>
         <QueryGate loading={sousSeuil.loading} error={sousSeuil.error} onRetry={sousSeuil.retry} hasData={sousSeuil.data !== null}>
           {sousSeuil.data && sousSeuil.data.eleves.length === 0 ? (
-            <EmptyState titre="Aucun élève sous 10/20 pour cette sélection." />
+            <EmptyState titre={`Aucun élève sous ${PASS_MARK}/20 pour cette sélection.`} />
           ) : (
             <>
               <p className="mb-3 text-sm text-muted">Effectif : {sousSeuil.data?.effectif ?? 0}</p>

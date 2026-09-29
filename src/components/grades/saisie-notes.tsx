@@ -4,8 +4,9 @@ import { useState } from "react";
 import Link from "next/link";
 import type { GrilleNotes, LigneGrille, LigneNoteEnvoi } from "@/lib/api-client/types";
 import { ApiError } from "@/lib/api-client";
-import { formatCoefficient, formatDate, formatNoteSaisie, videOuNull } from "@/lib/format";
+import { formatCoefficient, formatDate, formatMoyenne, formatNoteSaisie, videOuNull } from "@/lib/format";
 import { libelleTypeEvaluation } from "@/lib/labels";
+import { apercuMoyenneEvaluation } from "@/components/grades/apercu-moyenne";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -92,6 +93,15 @@ export function SaisieNotes({
       restantes += 1;
     }
   }
+
+  const apercu = apercuMoyenneEvaluation(
+    grille.lignes.flatMap((ligne) => {
+      const brouillon = brouillons[ligne.eleveId];
+      return brouillon ? [brouillon] : [];
+    }),
+    noteMax,
+    grille.evaluation.coefficient,
+  );
 
   const terme = recherche.trim().toLowerCase();
   const visibles = terme
@@ -233,9 +243,14 @@ export function SaisieNotes({
             {evaluation.periode} · sur {formatCoefficient(evaluation.noteMax)} · coefficient {formatCoefficient(evaluation.coefficient)} · {evaluation.enseignant}
           </p>
         </div>
-        <p className="text-sm text-ink" aria-live="polite">
-          {saisies} saisies · {absents} absents · {restantes} restantes
-        </p>
+        <div className="text-sm text-ink">
+          <p aria-live="polite">
+            {saisies} saisies · {absents} absents · {restantes} restantes
+          </p>
+          <p aria-live="polite">
+            Aperçu de la moyenne : {formatMoyenne(apercu.valeur)} · {apercu.appreciation}
+          </p>
+        </div>
       </div>
       <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-warning md:hidden">
         La saisie des notes est prévue pour un écran plus large.

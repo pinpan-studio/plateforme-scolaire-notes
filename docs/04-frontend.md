@@ -2,7 +2,7 @@
 
 L'interface vit dans `src/components/**`, `src/app/(app)/**`, `src/app/(auth)/**`, `src/lib/api-client/**` et les styles Tailwind. Elle n'implémente pas les Route Handlers, l'authentification, le middleware, ni les formules de `src/lib/grading/`.
 
-Les moyennes, rangs et appréciations affichés viennent de l'API. Le barème importé depuis `src/lib/grading` (`BAREME_APPRECIATION`) sert uniquement de légende. Aucune page ne rappelle `moyenneMatiere`, `moyenneGenerale` ou `classer`.
+Les chiffres publiés (résultats, bulletins, analyses, fiche élève) viennent de l'API. Tout affichage calculé dans l'interface importe `src/lib/grading` : l'aperçu de la grille appelle `computeSubjectAverage` et `appreciate`, la légende d'aide appelle `listAppreciationBands`, le seuil « sous la moyenne » est `PASS_MARK`. Aucune page ne recopie la pondération, l'arrondi ou le barème.
 
 ## 1. Décisions
 
@@ -23,7 +23,8 @@ Les moyennes, rangs et appréciations affichés viennent de l'API. Le barème im
 | Année | `PREPARATION` Brouillon, `EN_COURS` Active, `CLOTUREE` Clôturée. |
 | Note effacée | Une ligne ni absente ni chiffrée n'existe pas en base. L'envoi porte `supprimer: true` pour demander la suppression. |
 | Collage tableur | Collage presse-papiers dans la grille (une colonne de notes, ou note + commentaire, ou note + absence + commentaire). Pas d'import de fichier. |
-| Rang | Affiché tel que l'API le calcule (rang concours du module de calcul : 1, 1, 3). L'exemple UX 1, 2, 2, 4 est le même algorithme. Présentation `2e / 30`, `1er / 30`. |
+| Rang | Affiché tel que l'API le publie. Le module `rankCompetition` produit un rang de compétition (1, 2, 2, 4 ; un ex æquo en tête donne 1, 1, 3). Présentation `2e / 30`, `1er / 30`. |
+| Aperçu de saisie | La grille montre la moyenne de l'évaluation en cours, recalculée à chaque frappe par `computeSubjectAverage` (notes valides et absences seulement). Ce n'est pas la moyenne de matière publiée. |
 | Appréciation générale | Texte libre du professeur principal, distinct de l'appréciation calculée. `PUT /api/appreciations-generales`. |
 | Bulletins | Écran `/bulletins`. Les résultats de classe (classement, matières, évolution) sont sur `/resultats`. `/statistiques` redirige vers `/analyses`. |
 | Synthèse | `/synthese` choisit la classe. `/classes/[id]/synthese` ouvre la même vue. |
