@@ -193,7 +193,7 @@ Série `8, 10, 12, 16, 18` :
 
 ## Lancer les tests
 
-La config est locale pour ne pas dépendre d'un script npm :
+La config est locale pour ne pas dépendre d'un script npm. Elle est en CommonJS, sans import de `vitest/config`, afin que `npx vitest` fonctionne avant que le `package.json` du projet ne déclare Vitest. Le cache Vite est écrit dans le répertoire temporaire du système.
 
 ```bash
 npx vitest run --config src/lib/grading/vitest.config.ts
