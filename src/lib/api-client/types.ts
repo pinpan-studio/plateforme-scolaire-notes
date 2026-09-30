@@ -144,6 +144,16 @@ export type EleveEnvoi = {
   statut: StatutInscription;
 };
 
+/** Corps de `PATCH /api/eleves/:id`. Le matricule n'est pas modifiable. */
+export type EleveMiseAJour = {
+  nom?: string;
+  prenom?: string;
+  dateNaissance?: string;
+  sexe?: Sexe;
+  classeId?: string;
+  statut?: StatutInscription;
+};
+
 export type NoteHistorique = {
   evaluationId: string;
   date: string;

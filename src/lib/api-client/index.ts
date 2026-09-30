@@ -11,6 +11,7 @@ import type {
   ClasseResume,
   Distribution,
   EleveEnvoi,
+  EleveMiseAJour,
   EleveFiche,
   EleveResume,
   EnregistrementNotes,
@@ -47,7 +48,15 @@ import type {
 } from "@/lib/api-client/types";
 
 export { ApiError } from "@/lib/api-client/http";
-export { indexErreurs, messageUtilisateur, raisonInterdit } from "@/lib/api-client/http";
+export {
+  indexErreurs,
+  messageEchecEnregistrement,
+  messageUtilisateur,
+  raisonInterdit,
+  TEXTE_ECHEC_ENREGISTREMENT,
+  TEXTE_EVALUATION_DEJA_NOTEE,
+  TEXTE_REOUVERTURE_INTERDITE,
+} from "@/lib/api-client/http";
 export type * from "@/lib/api-client/types";
 
 type Brut = Record<string, unknown>;
@@ -241,6 +250,26 @@ function corpsEleve(corps: EleveEnvoi) {
     classeId: corps.classeId,
     statut: corps.statut === "INSCRIT" ? "ACTIF" : corps.statut,
   };
+}
+
+function corpsElevePatch(corps: EleveMiseAJour) {
+  const envoi: {
+    nom?: string;
+    prenom?: string;
+    dateNaissance?: string;
+    sexe?: EleveMiseAJour["sexe"];
+    classeId?: string;
+    statut?: "ACTIF" | "SORTI" | "TRANSFERE";
+  } = {};
+  if (corps.nom !== undefined) envoi.nom = corps.nom;
+  if (corps.prenom !== undefined) envoi.prenom = corps.prenom;
+  if (corps.dateNaissance !== undefined) envoi.dateNaissance = corps.dateNaissance;
+  if (corps.sexe !== undefined) envoi.sexe = corps.sexe;
+  if (corps.classeId !== undefined) envoi.classeId = corps.classeId;
+  if (corps.statut !== undefined) {
+    envoi.statut = corps.statut === "INSCRIT" ? "ACTIF" : corps.statut;
+  }
+  return envoi;
 }
 
 async function ignorerInterdit<T>(promesse: Promise<T>, repli: T): Promise<T> {
@@ -488,10 +517,10 @@ export const api = {
   creerEleve: (corps: EleveEnvoi) =>
     apiFetch<unknown>("/api/eleves", { method: "POST", body: JSON.stringify(corpsEleve(corps)) }).then(ficheMinimale),
 
-  modifierEleve: (id: string, corps: EleveEnvoi) =>
+  modifierEleve: (id: string, corps: EleveMiseAJour) =>
     apiFetch<unknown>(`/api/eleves/${id}`, {
       method: "PATCH",
-      body: JSON.stringify(corpsEleve(corps)),
+      body: JSON.stringify(corpsElevePatch(corps)),
     }).then(ficheMinimale),
 
   enseignants: (params: ListeParams = {}) =>

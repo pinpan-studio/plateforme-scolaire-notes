@@ -1,18 +1,80 @@
 "use client";
 
-import { api } from "@/lib/api-client";
+import { useRef, useState } from "react";
+import { api, messageEchecEnregistrement } from "@/lib/api-client";
 import { formatCoefficient, formatDate, formatMoyenne, formatRang } from "@/lib/format";
 import { libelleInscription, libelleSexe, libelleTypeEvaluation } from "@/lib/labels";
+import { peutEcrire } from "@/lib/ui-permissions";
 import { useApiData } from "@/components/data/use-api-data";
 import { QueryGate } from "@/components/data/query-gate";
 import { useSession } from "@/components/layout/session";
 import { Badge } from "@/components/ui/badge";
+import { Banner } from "@/components/ui/banner";
+import { Button } from "@/components/ui/button";
+import { SelectField } from "@/components/ui/fields";
 import { PageHeader } from "@/components/ui/page-header";
+import { useToast } from "@/components/ui/toast";
 
 export function EleveFichePage({ eleveId }: { eleveId: string }) {
-  const { anneeId } = useSession();
+  const { anneeId, session } = useSession();
+  const toast = useToast();
+  const ecriture = peutEcrire(session.utilisateur.role, "eleve");
   const fiche = useApiData(`eleve-${eleveId}-${anneeId ?? ""}`, () => api.eleve(eleveId, anneeId));
+  const classes = useApiData(
+    ecriture ? `classes-eleve-${anneeId ?? ""}` : "classes-eleve-skip",
+    () =>
+      ecriture
+        ? api.classes({ anneeId, page: 1, pageSize: 100 })
+        : Promise.resolve({ items: [], total: 0, page: 1, pageSize: 100 }),
+  );
   const eleve = fiche.data;
+  const contexte = `${eleveId}:${anneeId ?? ""}`;
+  const [contexteFormulaire, setContexteFormulaire] = useState<string | null>(null);
+  const [classeId, setClasseId] = useState("");
+  const [erreurChamp, setErreurChamp] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const verrou = useRef(false);
+
+  if (eleve && contexteFormulaire !== contexte) {
+    setContexteFormulaire(contexte);
+    setClasseId(eleve.inscription?.classeId ?? "");
+    setErreur(null);
+    setErreurChamp(null);
+  }
+
+  async function enregistrerClasse() {
+    if (!eleve || verrou.current) return;
+    if (!classeId) {
+      setErreurChamp("Choisissez une classe.");
+      setErreur(null);
+      return;
+    }
+    if (classeId === (eleve.inscription?.classeId ?? "")) {
+      setErreur(null);
+      setErreurChamp(null);
+      return;
+    }
+    verrou.current = true;
+    setBusy(true);
+    setErreur(null);
+    setErreurChamp(null);
+    try {
+      await api.modifierEleve(eleve.id, { classeId });
+      fiche.retry();
+      toast("Classe enregistrée.");
+    } catch (error) {
+      setErreur(messageEchecEnregistrement(error));
+    } finally {
+      verrou.current = false;
+      setBusy(false);
+    }
+  }
+
+  const optionsClasses = (classes.data?.items ?? []).map((classe) => ({ value: classe.id, label: classe.nom }));
+  if (eleve?.inscription && !optionsClasses.some((option) => option.value === eleve.inscription?.classeId)) {
+    optionsClasses.unshift({ value: eleve.inscription.classeId, label: eleve.inscription.classeNom });
+  }
 
   return (
     <QueryGate loading={fiche.loading} error={fiche.error} onRetry={fiche.retry} hasData={eleve !== null}>
@@ -36,6 +98,36 @@ export function EleveFichePage({ eleveId }: { eleveId: string }) {
                   <div className="flex justify-between gap-4"><dt className="text-muted">Sexe</dt><dd>{libelleSexe(eleve.sexe)}</dd></div>
                 ) : null}
               </dl>
+              {ecriture ? (
+                <form
+                  className="mt-4 space-y-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void enregistrerClasse();
+                  }}
+                >
+                  <h3 className="text-base font-semibold">Changer de classe</h3>
+                  {erreur ? <Banner ton="danger">{erreur}</Banner> : null}
+                  <SelectField
+                    id="classe-eleve"
+                    label="Classe"
+                    obligatoire
+                    erreur={erreurChamp ?? undefined}
+                    value={classeId}
+                    onChange={(event) => setClasseId(event.target.value)}
+                  >
+                    <option value="">Choisir</option>
+                    {optionsClasses.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </SelectField>
+                  <Button type="submit" busy={busy}>
+                    Enregistrer
+                  </Button>
+                </form>
+              ) : null}
             </section>
             <section className="rounded-lg border border-border bg-card p-4">
               <h2 className="text-lg font-semibold">Résultats</h2>

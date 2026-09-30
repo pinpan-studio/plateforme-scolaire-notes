@@ -6,19 +6,27 @@ import { cx } from "@/lib/cx";
 const champ =
   "w-full rounded-lg border-2 border-border bg-card px-3 py-2 text-base text-ink focus-visible:border-primary focus-visible:outline-none disabled:bg-slate-100";
 
+function idsDecrits(id: string, erreur: string | undefined, descriptionId: string | undefined): string | undefined {
+  const ids = [erreur ? `${id}-erreur` : null, descriptionId].filter((valeur): valeur is string => Boolean(valeur));
+  return ids.length > 0 ? ids.join(" ") : undefined;
+}
+
 export function TextField({
   id,
   label,
   obligatoire = false,
   erreur,
+  descriptionId,
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & {
   id: string;
   label: string;
   obligatoire?: boolean;
   erreur?: string;
+  descriptionId?: string;
 }) {
-  const description = erreur ? `${id}-erreur` : undefined;
+  const erreurId = erreur ? `${id}-erreur` : undefined;
+  const description = idsDecrits(id, erreur, descriptionId);
   return (
     <div>
       <label htmlFor={id} className="mb-1 block text-sm font-medium text-ink">
@@ -39,7 +47,7 @@ export function TextField({
         {...props}
       />
       {erreur ? (
-        <p id={description} className="mt-1 text-sm text-danger">
+        <p id={erreurId} className="mt-1 text-sm text-danger">
           {erreur}
         </p>
       ) : null}
@@ -52,6 +60,7 @@ export function SelectField({
   label,
   obligatoire = false,
   erreur,
+  descriptionId,
   children,
   ...props
 }: SelectHTMLAttributes<HTMLSelectElement> & {
@@ -59,9 +68,11 @@ export function SelectField({
   label: string;
   obligatoire?: boolean;
   erreur?: string;
+  descriptionId?: string;
   children: ReactNode;
 }) {
-  const description = erreur ? `${id}-erreur` : undefined;
+  const erreurId = erreur ? `${id}-erreur` : undefined;
+  const description = idsDecrits(id, erreur, descriptionId);
   return (
     <div>
       <label htmlFor={id} className="mb-1 block text-sm font-medium text-ink">
@@ -84,7 +95,7 @@ export function SelectField({
         {children}
       </select>
       {erreur ? (
-        <p id={description} className="mt-1 text-sm text-danger">
+        <p id={erreurId} className="mt-1 text-sm text-danger">
           {erreur}
         </p>
       ) : null}
