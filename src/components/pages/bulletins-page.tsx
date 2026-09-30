@@ -162,6 +162,13 @@ function DocumentBulletin({
         <h3 id="appreciation-generale-titre" className="font-semibold text-ink">
           Appréciation générale
         </h3>
+        {texte ? (
+          <p className={peutRediger ? "mt-3 hidden whitespace-pre-wrap break-words print:block" : "mt-1 whitespace-pre-wrap break-words"}>
+            {texte}
+          </p>
+        ) : (
+          <p className="mt-1">{messageVide}</p>
+        )}
         {peutRediger ? (
           <RedactionAppreciation
             key={`${bulletin.eleve.id}:${bulletin.periode?.id ?? ""}:${texte}`}
@@ -170,9 +177,6 @@ function DocumentBulletin({
             onEnregistrer={onEnregistrer}
           />
         ) : null}
-        <p className={peutRediger ? "mt-3 hidden whitespace-pre-wrap break-words print:block" : "mt-1 whitespace-pre-wrap break-words"}>
-          {texte || messageVide}
-        </p>
       </section>
     </article>
   );

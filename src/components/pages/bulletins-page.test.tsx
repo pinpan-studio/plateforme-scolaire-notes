@@ -213,6 +213,7 @@ describe("écran bulletin", () => {
 
     const champ = await screen.findByRole("textbox", { name: "Appréciation générale" });
     expect(champ).toHaveValue("");
+    expect(screen.getByText("Aucune appréciation générale.")).toBeInTheDocument();
     await user.type(champ, "Encouragements.");
     await user.click(screen.getByRole("button", { name: "Enregistrer" }));
     expect(mocks.enregistrerAppreciation).toHaveBeenCalledWith({
