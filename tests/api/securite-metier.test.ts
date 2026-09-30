@@ -694,6 +694,30 @@ describe("réouverture d'année, notes existantes et audit", () => {
     expect(succes?.acteurId).toBe(id);
   });
 
+  it("crée un compte dont l'e-mail commence par motdepasse", async () => {
+    const admin = await login("admin@tilleuls.demo");
+    const email = "motdepasse.jean@tilleuls.demo";
+    const creation = await call(postUtilisateurs, "/api/utilisateurs", {
+      method: "POST",
+      cookie: admin,
+      body: {
+        email,
+        motDePasse: MOT_DE_PASSE_A,
+        roleCode: "CONSULTATION",
+        prenom: "Mot",
+        nom: "Passe",
+      },
+    });
+    expect(creation.status).toBe(201);
+    const id = String((await jsonOf(creation)).id);
+    assertTrace(derniere(await audits(admin), "UTILISATEUR_CREATION", id), {
+      nouvelleValeur: JSON.stringify({ email, role: "CONSULTATION", actif: true }),
+    });
+    expect(() =>
+      assertValeurAuditable(JSON.stringify({ email, role: "CONSULTATION", actif: true })),
+    ).not.toThrow();
+  });
+
   it("refuse encore les vraies valeurs sensibles dans l'audit", () => {
     const jeton = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature";
     for (const secret of [
@@ -703,6 +727,8 @@ describe("réouverture d'année, notes existantes et audit", () => {
       jeton,
       '{"motDePasse":"secret"}',
       '{"mot_de_passe":"secret"}',
+      '{"fiche":{"contact":{"motDePasse":"secret"}}}',
+      '[{"mot_de_passe":"secret"}]',
       '{"motDePasseHash":"$2a$10$abcdefghijklmnopqrstuv"}',
     ]) {
       let caught: unknown;
@@ -714,6 +740,11 @@ describe("réouverture d'année, notes existantes et audit", () => {
       expect(caught).toMatchObject({ status: 500, code: "ERREUR_INTERNE" });
     }
     expect(() => assertValeurAuditable("jean.tmp-motdepasse@tilleuls.demo")).not.toThrow();
+    expect(() =>
+      assertValeurAuditable(
+        JSON.stringify({ email: "motdepasse@tilleuls.demo", role: "CONSULTATION", actif: true }),
+      ),
+    ).not.toThrow();
     expect(() =>
       assertValeurAuditable(
         JSON.stringify({ email: "jean.tmp-motdepasse@tilleuls.demo", role: "CONSULTATION", actif: true }),

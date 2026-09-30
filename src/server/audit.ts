@@ -50,17 +50,42 @@ export function auditPour(
   };
 }
 
+const CLES_SECRETES = new Set(["motdepasse", "mot_de_passe"]);
+
+function cleSecrete(cle: string) {
+  return CLES_SECRETES.has(cle.toLowerCase());
+}
+
+/** Clés `motDePasse` et `mot_de_passe`, y compris dans les objets imbriqués et les tableaux. */
+function objetAvecCleSecrete(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(objetAvecCleSecrete);
+  if (!value || typeof value !== "object") return false;
+  return Object.entries(value).some(([cle, enfant]) => cleSecrete(cle) || objetAvecCleSecrete(enfant));
+}
+
+function jsonStructure(value: string): unknown {
+  const debut = value.trimStart();
+  if (!debut.startsWith("{") && !debut.startsWith("[")) return undefined;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Le journal ne reçoit ni hachage, ni mot de passe temporaire, ni jeton dans les valeurs avant/après.
- * L'identifiant n'est pas filtré : c'est souvent l'e-mail de l'acteur, qui peut contenir « tmp- » ou « motdepasse ».
- * Le mot de passe temporaire généré est ancré en début de valeur (`Tmp-`).
+ * Les clés `motDePasse` et `mot_de_passe` sont lues sur l'objet parsé, pas dans le texte JSON :
+ * un e-mail peut commencer par « motdepasse » ou contenir « tmp- ».
+ * L'identifiant n'est pas filtré. Le mot de passe temporaire généré est ancré en début de valeur (`Tmp-`).
  */
 export function assertValeurAuditable(value: string | null | undefined) {
   if (!value) return;
-  const secret =
-    /^Tmp-/.test(value) ||
-    /\$2[aby]\$|"mot_?de_?passe|bearer\s|eyJ[A-Za-z0-9_-]{8,}\./i.test(value);
-  if (secret) {
+  if (/^Tmp-/.test(value) || /\$2[aby]\$|bearer\s|eyJ[A-Za-z0-9_-]{8,}\./i.test(value)) {
+    throw new ApiError(500, "ERREUR_INTERNE", "Une erreur interne est survenue.");
+  }
+  const structure = jsonStructure(value);
+  if (structure !== undefined && objetAvecCleSecrete(structure)) {
     throw new ApiError(500, "ERREUR_INTERNE", "Une erreur interne est survenue.");
   }
 }
