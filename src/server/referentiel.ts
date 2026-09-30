@@ -184,7 +184,7 @@ export async function updateAnnee(session: SessionUser, id: string, body: unknow
         nouvelleValeur: error.statutDemande,
       }),
     );
-    throw forbidden("Seule l'administration peut rouvrir une année clôturée.");
+    throw new ApiError(403, "REOUVERTURE_INTERDITE", "Seule l'administration peut rouvrir une année clôturée.");
   }
 }
 

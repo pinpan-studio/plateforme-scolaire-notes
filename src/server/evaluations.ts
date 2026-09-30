@@ -233,11 +233,10 @@ export async function updateEvaluation(session: SessionUser, id: string, body: u
     if (classeChange || matiereChange || periodeChange || noteMaxChange) {
       const [{ total }] = await tx.select({ total: count() }).from(note).where(eq(note.evaluationId, id));
       if (total > 0) {
-        throw new ApiError(
-          409,
-          "CONFLIT",
-          "Impossible de modifier la classe, la matière, la période ou la note maximale tant que des notes existent.",
-        );
+        const message =
+          "Impossible de modifier la classe, la matière, la période ou la note maximale tant que des notes existent.";
+        const code = classeChange || matiereChange || periodeChange ? "EVALUATION_DEJA_NOTEE" : "NOTE_MAX_FIGEE";
+        throw new ApiError(409, code, message);
       }
     }
     const [updated] = await tx

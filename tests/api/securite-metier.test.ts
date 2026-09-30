@@ -101,7 +101,12 @@ describe("réouverture d'année, notes existantes et audit", () => {
       body: { statut: "PREPARATION" },
     });
     expect(directionTente.status).toBe(403);
-    expect(((await jsonOf(directionTente)) as Erreur).error?.code).toBe("FORBIDDEN");
+    expect((await jsonOf(directionTente)) as Erreur).toMatchObject({
+      error: {
+        code: "REOUVERTURE_INTERDITE",
+        message: "Seule l'administration peut rouvrir une année clôturée.",
+      },
+    });
     const refus = (await audits(admin)).filter(
       (ligne) => ligne.type === "AUTORISATION_REFUSEE" && ligne.cibleId === id,
     );
@@ -133,6 +138,9 @@ describe("réouverture d'année, notes existantes et audit", () => {
       body: { statut: "EN_COURS" },
     });
     expect(enseignantTente.status).toBe(403);
+    expect((await jsonOf(enseignantTente)) as Erreur).toMatchObject({
+      error: { code: "FORBIDDEN", message: "Action interdite pour ce rôle." },
+    });
     expect(
       (await audits(admin)).filter((ligne) => ligne.type === "AUTORISATION_REFUSEE" && ligne.cibleId === id),
     ).toHaveLength(avantRefus + 1);
@@ -234,7 +242,12 @@ describe("réouverture d'année, notes existantes et audit", () => {
       body: { classeId: cinquieme!.id },
     });
     expect(deplacement.status).toBe(409);
-    expect(((await jsonOf(deplacement)) as Erreur).error?.code).toBe("CONFLIT");
+    expect((await jsonOf(deplacement)) as Erreur).toMatchObject({
+      error: {
+        code: "ELEVE_DEJA_NOTE",
+        message: "Impossible de déplacer un élève qui possède déjà des notes.",
+      },
+    });
     const relu = await jsonOf(
       await call(getEleve, `/api/eleves/${note.id}`, { cookie: admin, params: { id: note.id } }),
     );
@@ -397,7 +410,13 @@ describe("réouverture d'année, notes existantes et audit", () => {
         body: { noteMax: 12 },
       });
       expect(refuse.status).toBe(409);
-      expect(((await jsonOf(refuse)) as Erreur).error?.code).toBe("CONFLIT");
+      expect((await jsonOf(refuse)) as Erreur).toMatchObject({
+        error: {
+          code: "NOTE_MAX_FIGEE",
+          message:
+            "Impossible de modifier la classe, la matière, la période ou la note maximale tant que des notes existent.",
+        },
+      });
       const fiche = await jsonOf(
         await call(getEvaluation, `/api/evaluations/${evaluationId}`, {
           cookie: admin,
@@ -429,7 +448,13 @@ describe("réouverture d'année, notes existantes et audit", () => {
           body,
         });
         expect(refuseChamp.status).toBe(409);
-        expect(((await jsonOf(refuseChamp)) as Erreur).error?.code).toBe("CONFLIT");
+        expect((await jsonOf(refuseChamp)) as Erreur).toMatchObject({
+          error: {
+            code: "EVALUATION_DEJA_NOTEE",
+            message:
+              "Impossible de modifier la classe, la matière, la période ou la note maximale tant que des notes existent.",
+          },
+        });
       }
       const ancree = await jsonOf(
         await call(getEvaluation, `/api/evaluations/${evaluationId}`, {

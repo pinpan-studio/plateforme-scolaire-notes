@@ -283,7 +283,7 @@ export async function updateEleve(session: SessionUser, id: string, body: unknow
             .innerJoin(evaluation, eq(note.evaluationId, evaluation.id))
             .where(and(eq(note.eleveId, id), eq(evaluation.classeId, existing.classeId)));
           if (total > 0) {
-            throw new ApiError(409, "CONFLIT", "Impossible de déplacer un élève qui possède déjà des notes.");
+            throw new ApiError(409, "ELEVE_DEJA_NOTE", "Impossible de déplacer un élève qui possède déjà des notes.");
           }
         }
         const [updated] = await tx
