@@ -46,16 +46,29 @@ Réponse `200` : `{ "utilisateur": { "id", "email", "role", "enseignantId", "pre
 | 400 | `JSON_INVALIDE` | Corps qui n'est pas du JSON |
 | 401 | `UNAUTHENTICATED` | Session absente, expirée, révoquée ou compte désactivé après émission |
 | 403 | `FORBIDDEN` | Rôle ou affectation insuffisante |
+| 403 | `REOUVERTURE_INTERDITE` | Réouverture d'une année clôturée par un rôle autre que `ADMIN` |
 | 403 | `ANNEE_CLOTUREE` | Écriture sur une année close, hors administrateur |
 | 403 | `CSRF` | `Origin` hostile ou `Sec-Fetch-Site: cross-site` |
 | 403 | `ACCOUNT_DISABLED` | Connexion d'un compte inactif |
 | 404 | `NOT_FOUND` | Identifiant inconnu |
 | 409 | `CONFLIT` | Unicité, version périmée, suppression encore référencée |
+| 409 | `ELEVE_DEJA_NOTE` | Déplacement d'un élève qui a déjà des notes |
+| 409 | `NOTE_MAX_FIGEE` | `noteMax` modifié alors que l'évaluation a des notes |
+| 409 | `EVALUATION_DEJA_NOTEE` | `classeId`, `matiereId` ou `periodeId` modifié alors que l'évaluation a des notes |
 | 422 | `VALIDATION` | Zod, barème, inscription, règle de gestion |
 | 429 | `RATE_LIMITED` | Login, recherche ou écriture de notes |
 | 500 | `ERREUR_INTERNE` | Message générique, sans pile ni SQL |
 
 Les objets JSON sont stricts : une propriété inconnue (`role` sur un élève) est un `422`. Les identifiants sont des UUID. Une recherche `q` de plus de 80 caractères est un `422`. Le tri (`sort`) est une liste blanche (`nom`, `prenom`, `matricule`).
+
+Le front affiche `error.message` tel quel, en français. Les quatre refus ci-dessous ont un `error.code` stable. Une requête qui change à la fois `noteMax` et la classe, la matière ou la période renvoie `EVALUATION_DEJA_NOTEE`. Un rôle qui ne peut pas écrire les années (`ENSEIGNANT`, par exemple) reçoit `403` `FORBIDDEN` (« Action interdite pour ce rôle. ») avant la garde de réouverture.
+
+| Refus | Route | Statut | `error.code` | `error.message` |
+| --- | --- | --- | --- | --- |
+| Réouverture d'une année clôturée par un non-ADMIN autorisé à écrire l'année | `PATCH /api/annees/:id` | 403 | `REOUVERTURE_INTERDITE` | Seule l'administration peut rouvrir une année clôturée. |
+| Déplacement d'un élève qui a des notes | `PATCH /api/eleves/:id` | 409 | `ELEVE_DEJA_NOTE` | Impossible de déplacer un élève qui possède déjà des notes. |
+| Changement de `noteMax` d'une évaluation notée | `PATCH /api/evaluations/:id` | 409 | `NOTE_MAX_FIGEE` | Impossible de modifier la classe, la matière, la période ou la note maximale tant que des notes existent. |
+| Changement de `classeId`, `matiereId` ou `periodeId` d'une évaluation notée | `PATCH /api/evaluations/:id` | 409 | `EVALUATION_DEJA_NOTEE` | Impossible de modifier la classe, la matière, la période ou la note maximale tant que des notes existent. |
 
 ## 3. Matrice appliquée
 
@@ -73,7 +86,7 @@ Un professeur principal ne saisit pas les notes de ses collègues. Une année `C
 
 La lecture d'une note hors périmètre est un `403` dont le corps ne contient pas la valeur. Un lot qui mélange une ligne autorisée et une ligne hors périmètre est rejeté en entier (`403`), sans écriture. Une ligne invalide (barème, absence contradictoire, élève hors classe) rejette le lot en `422`, sans écriture.
 
-Les suppressions qui casseraient des données sont des `409` : élève qui a des notes, classe qui a des inscriptions, affectations ou évaluations, matière ou évaluation encore référencée. La base, elle, cascade certaines lignes ; l'API refuse avant.
+Les suppressions qui casseraient des données sont des `409` : élève qui a des notes, classe qui a des inscriptions, affectations ou évaluations, matière ou évaluation encore référencée. Déplacer un élève vers une autre classe, ou changer la classe, la matière, la période ou la note maximale d'une évaluation, est aussi un `409` tant que des notes existent. La vérification et l'écriture se font dans la même transaction. La base, elle, cascade certaines lignes ; l'API refuse avant.
 
 ## 4. Pagination et filtres
 
@@ -104,7 +117,7 @@ Sauf mention, le corps des écritures est du JSON et la session est obligatoire.
 }
 ```
 
-Le matricule est trimé puis mis en capitales. La création inscrit l'élève dans la classe. `DELETE` d'un élève noté : `409`. `PATCH` peut changer `classeId` (déplacement dans l'année de la classe). Le matricule n'est pas modifiable. `version` (horodatage ISO renvoyé par l'API) provoque un `409` si la fiche a changé.
+Le matricule est trimé puis mis en capitales. La création inscrit l'élève dans la classe. `DELETE` d'un élève noté : `409`. `PATCH` peut changer `classeId` (déplacement dans l'année de la classe) seulement s'il n'a aucune note dans la classe quittée ; sinon `409` `ELEVE_DEJA_NOTE` et la classe reste inchangée. Une mise à jour sans changement de classe (nom, prénom) reste possible. Le matricule n'est pas modifiable. `version` (horodatage ISO renvoyé par l'API) provoque un `409` si la fiche a changé.
 
 ### Classes et inscriptions
 
@@ -155,7 +168,7 @@ L'année de l'affectation est celle de la classe. Une classe n'a qu'un enseignan
 | GET | `/api/niveaux` | tout compte authentifié |
 | GET, PATCH | `/api/etablissement` | PATCH ADMIN, GET ADMIN et DIRECTION |
 
-Une seule année `EN_COURS`. Ouvrir une deuxième sans clôturer la précédente : `409`.
+Une seule année `EN_COURS`. Ouvrir une deuxième sans clôturer la précédente : `409`. Rouvrir une année `CLOTUREE` (la passer à `PREPARATION` ou `EN_COURS`) est réservé à `ADMIN`. `DIRECTION` reçoit `403` `REOUVERTURE_INTERDITE` et une ligne `AUTORISATION_REFUSEE` (acteur, action `PATCH`, ressource, ancien et nouveau statut) écrite après l'annulation de la transaction. Les autres rôles reçoivent `403` avant cette garde. Le rôle lu est celui de la session : un rôle dans le corps ou un en-tête n'est pas pris en compte (corps strict : `422`, sans ligne d'audit). Clôturer reste ouvert à `ADMIN` et `DIRECTION`. Chaque changement de statut est journalisé dans la même transaction (acteur, ancien statut, nouveau statut, horodatage).
 
 ### Comptes
 
@@ -198,7 +211,7 @@ Le mot de passe initial fait au moins 12 caractères. Le changement exige `motDe
 }
 ```
 
-`type` : `DEVOIR`, `COMPOSITION`, `INTERROGATION`. L'enseignant enregistré est celui de l'affectation. Un enseignant ne peut pas désigner un collègue.
+`type` : `DEVOIR`, `COMPOSITION`, `INTERROGATION`. L'enseignant enregistré est celui de l'affectation. Un enseignant ne peut pas désigner un collègue. Changer `classeId`, `matiereId` ou `periodeId` alors que des notes existent : `409` `EVALUATION_DEJA_NOTEE`. Changer `noteMax` dans le même cas : `409` `NOTE_MAX_FIGEE`. Les valeurs restent inchangées. La lecture verrouillée, le décompte des notes et le refus se font dans la même transaction. Renvoyer la même valeur, ou modifier le libellé, le coefficient ou la date, reste accepté. Un changement effectif de `noteMax` ou de coefficient est journalisé.
 
 ### Notes
 
@@ -251,7 +264,7 @@ Statistiques : `computeStatistics` sur les moyennes déjà publiées. La répons
 
 | Méthode | Route | Accès |
 | --- | --- | --- |
-| GET | `/api/audit` | ADMIN. Créations, modifications, suppressions et validations de notes, connexions, déconnexions, refus `403`. Horodatage UTC. Pas de mot de passe |
+| GET | `/api/audit` | ADMIN. Notes, connexions, déconnexions, refus `403` (y compris la réouverture d'une année clôturée), comptes (création, rôle, activation), mots de passe réinitialisés sans valeur ni jeton, affectations, barèmes (note maximale, coefficients), états d'année. Horodatage UTC. |
 | GET | `/api/health` | public, `{ "status": "ok" }`, aucune donnée métier |
 
 Le journal n'est pas modifiable par l'API. Conservation visée : 12 mois, les lignes restent en base au redéploiement. Il n'y a pas de route de réinitialisation de mot de passe.
