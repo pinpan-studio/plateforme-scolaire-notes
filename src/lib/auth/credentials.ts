@@ -29,7 +29,7 @@ export async function authenticate(
   ip: string,
   secure = false,
 ): Promise<AuthResult> {
-  assertLoginAllowed(ip, email);
+  await assertLoginAllowed(ip, email);
   const normalized = email.trim().toLowerCase();
   const [row] = await getDb()
     .select({
@@ -49,7 +49,7 @@ export async function authenticate(
 
   const passwordOk = await verifyPassword(password, row?.motDePasseHash ?? null);
   if (!row || !passwordOk || !isRole(row.roleCode)) {
-    recordLoginFailure(ip, normalized);
+    await recordLoginFailure(ip, normalized);
     await writeAudit({
       type: "AUTH_ECHEC",
       identifiant: maskIdentifier(normalized),
@@ -72,7 +72,7 @@ export async function authenticate(
     return { status: "disabled" };
   }
 
-  recordLoginSuccess(ip, normalized);
+  await recordLoginSuccess(ip, normalized);
   const sessionVersion = row.sessionVersion + 1;
   await getDb().update(utilisateur).set({ sessionVersion }).where(eq(utilisateur.id, row.id));
 

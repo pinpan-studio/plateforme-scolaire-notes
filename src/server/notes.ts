@@ -1,7 +1,8 @@
-import { and, asc, eq } from "drizzle-orm";
-import { eleve, evaluation, inscription, note } from "@/db/schema";
+import { createHash } from "node:crypto";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { eleve, evaluation, inscription, journalAudit, note } from "@/db/schema";
 import { canWriteGrades, type SessionUser } from "@/lib/auth/permissions";
-import { assertWriteRate } from "@/lib/auth/rate-limit";
+import { assertWriteRate, consumeValidationAttempt } from "@/lib/auth/rate-limit";
 import { getDb, type Database } from "./db";
 import { writeAudit } from "./audit";
 import { ApiError, forbidden, notFound } from "./errors";
@@ -410,10 +411,48 @@ export async function saveLot(session: SessionUser, body: unknown) {
   return { data: saved, total: saved.length };
 }
 
-export async function validateNotes(session: SessionUser, body: unknown) {
-  if (!canWriteGrades(session.role)) throw forbidden();
-  const record = body && typeof body === "object" && "lignes" in body ? body : { lignes: [body] };
-  const lignes = await prepareLot(session, record, "POST");
+function validationFingerprint(lignes: PreparedLine[]): { cibleId: string | null; valeur: string } {
+  const canonical = lignes
+    .map((ligne) =>
+      [ligne.evaluationId, ligne.eleveId, ligne.estAbsent ? "absent" : String(ligne.valeur), ligne.commentaire ?? ""].join(
+        ":",
+      ),
+    )
+    .sort()
+    .join("|");
+  const hash = createHash("sha256").update(canonical).digest("hex");
+  const evaluations = new Set(lignes.map((ligne) => ligne.evaluationId));
+  return {
+    cibleId: evaluations.size === 1 ? (lignes[0]?.evaluationId ?? null) : null,
+    valeur: `${lignes.length}:${hash}`,
+  };
+}
+
+/**
+ * Trace une validation effective, une fois par état.
+ * Un rappel identique (même évaluation, mêmes valeurs) ne rajoute pas de ligne :
+ * le journal ne se remplit pas à chaque appel. Un état différent — valeur,
+ * absence ou commentaire — produit une nouvelle ligne. L'empreinte ne contient
+ * pas les notes en clair.
+ */
+async function auditValidation(session: SessionUser, lignes: PreparedLine[]): Promise<void> {
+  const fingerprint = validationFingerprint(lignes);
+  const [last] = await getDb()
+    .select({ nouvelleValeur: journalAudit.nouvelleValeur })
+    .from(journalAudit)
+    .where(
+      and(
+        eq(journalAudit.type, "NOTE_VALIDATION"),
+        eq(journalAudit.acteurId, session.id),
+        eq(journalAudit.action, "VALIDER"),
+        fingerprint.cibleId === null
+          ? isNull(journalAudit.cibleId)
+          : eq(journalAudit.cibleId, fingerprint.cibleId),
+      ),
+    )
+    .orderBy(desc(journalAudit.createdAt))
+    .limit(1);
+  if (last?.nouvelleValeur === fingerprint.valeur) return;
   await writeAudit({
     type: "NOTE_VALIDATION",
     acteurId: session.id,
@@ -421,8 +460,16 @@ export async function validateNotes(session: SessionUser, body: unknown) {
     resultat: "200",
     action: "VALIDER",
     cibleType: "note",
-    cibleId: null,
-    nouvelleValeur: String(lignes.length),
+    cibleId: fingerprint.cibleId,
+    nouvelleValeur: fingerprint.valeur,
   });
+}
+
+export async function validateNotes(session: SessionUser, body: unknown, ip: string) {
+  if (!canWriteGrades(session.role)) throw forbidden();
+  await consumeValidationAttempt(session.id, ip);
+  const record = body && typeof body === "object" && "lignes" in body ? body : { lignes: [body] };
+  const lignes = await prepareLot(session, record, "POST");
+  await auditValidation(session, lignes);
   return { valide: true, lignes: lignes.length };
 }

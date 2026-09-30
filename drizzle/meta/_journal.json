@@ -22,6 +22,13 @@
       "when": 1790692000000,
       "tag": "0002_appreciation_mot_de_passe",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1759230000000,
+      "tag": "0003_limite_tentative",
+      "breakpoints": true
     }
   ]
 }

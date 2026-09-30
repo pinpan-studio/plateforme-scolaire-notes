@@ -20,7 +20,12 @@ import {
   type SessionUser,
 } from "@/lib/auth/permissions";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
-import { assertSearchRate } from "@/lib/auth/rate-limit";
+import {
+  assertPasswordChangeAllowed,
+  assertSearchRate,
+  recordPasswordChangeAttempt,
+  recordPasswordChangeSuccess,
+} from "@/lib/auth/rate-limit";
 import { getDb } from "./db";
 import { ApiError, forbidden, notFound } from "./errors";
 import { optionalUuid, pagination, searchParams, searchQuery, versionOf } from "./query";
@@ -461,19 +466,27 @@ export async function createUtilisateur(session: SessionUser, body: unknown) {
   return publicUtilisateur(row);
 }
 
-export async function updateUtilisateur(session: SessionUser, id: string, body: unknown) {
+export async function updateUtilisateur(session: SessionUser, id: string, body: unknown, ip: string) {
   assertWriteReferential(session);
   const input = parseBody(patchUtilisateurSchema, body);
+  if (input.motDePasse) await assertPasswordChangeAllowed(session.id, ip);
   const db = getDb();
   const [current] = await db.select().from(utilisateur).where(eq(utilisateur.id, id)).limit(1);
-  if (!current) throw notFound("Utilisateur introuvable.");
+  if (!current) {
+    if (input.motDePasse) await recordPasswordChangeAttempt(session.id, ip);
+    throw notFound("Utilisateur introuvable.");
+  }
   let motDePasseHash = current.motDePasseHash;
   if (input.motDePasse) {
     if (!input.motDePasseActuel) {
+      await recordPasswordChangeAttempt(session.id, ip);
       throw new ApiError(403, "FORBIDDEN", "Le mot de passe actuel est requis.");
     }
     const ok = await verifyPassword(input.motDePasseActuel, current.motDePasseHash);
-    if (!ok) throw new ApiError(403, "FORBIDDEN", "Le mot de passe actuel est requis.");
+    if (!ok) {
+      await recordPasswordChangeAttempt(session.id, ip);
+      throw new ApiError(403, "FORBIDDEN", "Le mot de passe actuel est requis.");
+    }
     motDePasseHash = await hashPassword(input.motDePasse);
   }
   const [row] = await db
@@ -498,20 +511,26 @@ export async function updateUtilisateur(session: SessionUser, id: string, body: 
       nom: utilisateur.nom,
       actif: utilisateur.actif,
     });
+  if (input.motDePasse) await recordPasswordChangeSuccess(session.id);
   return publicUtilisateur(row);
 }
 
-export async function changerMotDePasse(session: SessionUser, body: unknown) {
+export async function changerMotDePasse(session: SessionUser, body: unknown, ip: string) {
   const input = parseBody(changementMotDePasseSchema, body);
+  await assertPasswordChangeAllowed(session.id, ip);
   const db = getDb();
   const [current] = await db.select().from(utilisateur).where(eq(utilisateur.id, session.id)).limit(1);
   if (!current || !current.actif) throw forbidden("Compte indisponible.");
   const ok = await verifyPassword(input.motDePasseActuel, current.motDePasseHash);
-  if (!ok) throw new ApiError(403, "FORBIDDEN", "Le mot de passe actuel est requis.");
+  if (!ok) {
+    await recordPasswordChangeAttempt(session.id, ip);
+    throw new ApiError(403, "FORBIDDEN", "Le mot de passe actuel est requis.");
+  }
   await db
     .update(utilisateur)
     .set({ motDePasseHash: await hashPassword(input.motDePasse), sessionVersion: sql`${utilisateur.sessionVersion} + 1` })
     .where(eq(utilisateur.id, current.id));
+  await recordPasswordChangeSuccess(session.id);
   await writeAudit({
     type: "MOT_DE_PASSE",
     acteurId: session.id,
@@ -523,11 +542,15 @@ export async function changerMotDePasse(session: SessionUser, body: unknown) {
   });
 }
 
-export async function definirMotDePasseTemporaire(session: SessionUser, id: string) {
+export async function definirMotDePasseTemporaire(session: SessionUser, id: string, ip: string) {
   assertWriteReferential(session);
+  await assertPasswordChangeAllowed(session.id, ip);
   const db = getDb();
   const [current] = await db.select().from(utilisateur).where(eq(utilisateur.id, id)).limit(1);
-  if (!current) throw notFound("Utilisateur introuvable.");
+  if (!current) {
+    await recordPasswordChangeAttempt(session.id, ip);
+    throw notFound("Utilisateur introuvable.");
+  }
   const motDePasseTemporaire = `Tmp-${randomBytes(9).toString("base64url")}`;
   await db
     .update(utilisateur)
@@ -536,6 +559,7 @@ export async function definirMotDePasseTemporaire(session: SessionUser, id: stri
       sessionVersion: sql`${utilisateur.sessionVersion} + 1`,
     })
     .where(eq(utilisateur.id, id));
+  await recordPasswordChangeAttempt(session.id, ip);
   await writeAudit({
     type: "MOT_DE_PASSE",
     acteurId: session.id,

@@ -10,6 +10,7 @@ Revue faite sur la branche d'intégration, contre PostgreSQL local et le code se
 | `PATCH /api/utilisateurs/:id` changeait le mot de passe sans incrémenter `session_version`. L'ancienne session restait valable. | La version de session est incrémentée quand le mot de passe change. La déconnexion et le mot de passe temporaire le faisaient déjà. |
 | La limite de 30 recherches par minute ne couvrait que la liste des élèves. | Le même compteur s'applique à la recherche des classes, des évaluations et des matières. |
 | `GET /api/health` ne prouvait pas que la base répondait. | La route exécute `select 1` et renvoie `database: ok` ou `503`. |
+| Limite de connexion en mémoire, par instance, sans remise à zéro de la fenêtre. Les changements de mot de passe n'étaient pas bornés. `POST /api/notes/valider` n'était pas borné et écrivait une ligne d'audit à chaque appel. | Compteurs dans `limite_tentative` (migration `0003`), fenêtre glissante, couple e-mail+IP et IP, remise à zéro après succès ou expiration. Même limiteur sur les routes de mot de passe et sur la validation (utilisateur de session et IP). L'audit de validation ne garde qu'un passage par état. |
 
 ## Contrôles vérifiés
 
@@ -37,7 +38,6 @@ Le mot de passe `Demo-2026!` et ses hachages sont des fixtures de démonstration
 
 | Sévérité | Sujet | État |
 | --- | --- | --- |
-| Majeur | Limite de débit en mémoire, par instance. Deux instances Vercel ne partagent pas les compteurs. | Ouvert. Un magasin partagé (Redis) n'est pas branché. |
 | Majeur | Le lot de notes n'a pas de contrôle de version. Deux enregistrements rapprochés : le dernier écrase, sans `409`. Le `PATCH` unitaire, lui, compare `version`. | Ouvert. |
 | Majeur | Pas de rôle élève. `CONSULTATION` lit les notes de l'établissement. La matrice « élève / ses notes seulement » de la checklist ne s'applique pas. | Écart de modèle, assumé. |
 | Majeur | `DIRECTION` lit les notes mais ne crée pas d'élève (`403`). La checklist attendait un rôle scolarité autorisé à créer un élève. | Écart de modèle, assumé. Le test de parcours l'affirme. |
