@@ -95,7 +95,7 @@ describe("limiteur de connexion partagé", () => {
       expect(bloque.headers.get("retry-after")).toBeTruthy();
       const corps = await jsonOf(bloque);
       expect(corps).toEqual({
-        error: { code: "RATE_LIMITED", message: "Trop de tentatives. Réessayez plus tard." },
+        error: { code: "TROP_DE_TENTATIVES", message: "Trop de tentatives. Réessayez plus tard." },
       });
       expect(JSON.stringify(corps)).not.toContain(email);
       const autre = await call(loginRoute, "/api/auth/login", {
@@ -251,14 +251,19 @@ describe("changement de mot de passe limité", () => {
       expect(bloque.status).toBe(429);
       expect(bloque.headers.get("retry-after")).toBeTruthy();
       expect(await jsonOf(bloque)).toEqual({
-        error: { code: "RATE_LIMITED", message: "Trop de tentatives. Réessayez plus tard." },
+        error: { code: "TROP_DE_TENTATIVES", message: "Trop de tentatives. Réessayez plus tard." },
       });
     });
   });
 
   it("borne le mot de passe temporaire sans révéler si le compte existe", async () => {
     await withEnv(
-      { PASSWORD_RATE_LIMIT_MAX: "10", PASSWORD_RATE_LIMIT_IP_MAX: "2" },
+      {
+        PASSWORD_RATE_LIMIT_MAX: "1",
+        PASSWORD_RATE_LIMIT_IP_MAX: "30",
+        TEMP_PASSWORD_RATE_LIMIT_MAX: "10",
+        TEMP_PASSWORD_RATE_LIMIT_IP_MAX: "2",
+      },
       async () => {
         const cookie = await login(ADMIN);
         const [compte] = await getDb()
@@ -313,6 +318,13 @@ describe("changement de mot de passe limité", () => {
           headers: { "x-forwarded-for": "198.51.100.81" },
         });
         expect(autreIp.status).toBe(200);
+        const changement = await call(patchMotDePasse, "/api/profil/mot-de-passe", {
+          method: "PATCH",
+          cookie,
+          headers: { "x-forwarded-for": ip },
+          body: { motDePasseActuel: "mauvais-mot-de-passe", motDePasse: "Un-mot-de-passe-12" },
+        });
+        expect(changement.status).toBe(403);
       },
     );
   });
@@ -443,7 +455,7 @@ describe("validation des notes", () => {
         expect(bloque.status).toBe(429);
         expect(bloque.headers.get("retry-after")).toBeTruthy();
         expect(await jsonOf(bloque)).toEqual({
-          error: { code: "RATE_LIMITED", message: "Trop de tentatives. Réessayez plus tard." },
+          error: { code: "TROP_DE_TENTATIVES", message: "Trop de tentatives. Réessayez plus tard." },
         });
         const autreIp = await appel(ctx.nathan, "198.51.100.111");
         expect(autreIp.status).toBe(429);

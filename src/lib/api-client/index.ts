@@ -568,9 +568,26 @@ export const api = {
 
   grille: (evaluationId: string) => chargerGrille(evaluationId),
 
+  validerNotes: (evaluationId: string, lignes: LigneNoteEnvoi[]) =>
+    apiFetch<{ valide: boolean; lignes: number }>("/api/notes/valider", {
+      method: "POST",
+      body: JSON.stringify({
+        evaluationId,
+        lignes: lignes.map((ligne) => ({
+          eleveId: ligne.eleveId,
+          valeur: ligne.absent ? null : ligne.valeur,
+          estAbsent: ligne.absent,
+          commentaire: ligne.commentaire,
+        })),
+      }),
+    }),
+
   enregistrerNotes: async (evaluationId: string, lignes: LigneNoteEnvoi[]): Promise<EnregistrementNotes> => {
     const aSupprimer = lignes.filter((ligne) => ligne.supprimer);
     const aEcrire = lignes.filter((ligne) => !ligne.supprimer);
+    if (aEcrire.length > 0) {
+      await api.validerNotes(evaluationId, aEcrire);
+    }
     const actuelle = await chargerGrille(evaluationId);
     const noteParEleve = new Map(actuelle.lignes.map((ligne) => [ligne.eleveId, ligne.noteId]));
     for (const ligne of aSupprimer) {

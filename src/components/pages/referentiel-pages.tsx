@@ -388,6 +388,18 @@ export function UtilisateursPage() {
   const [motDePasse, setMotDePasse] = useState<string | null>(null);
   const [formulaire, setFormulaire] = useState({ email: "", prenom: "", nom: "", role: "CONSULTATION" as Role, enseignantId: "", motDePasse: "" });
   const [erreurs, setErreurs] = useState<Record<string, string>>({});
+  const [erreurAction, setErreurAction] = useState<string | null>(null);
+
+  async function definirTemporaire(id: string) {
+    setErreurAction(null);
+    try {
+      const reponse = await api.motDePasseTemporaire(id);
+      setMotDePasse(reponse.motDePasseTemporaire);
+    } catch (error) {
+      setMotDePasse(null);
+      setErreurAction(messageUtilisateur(error, "Impossible de définir un mot de passe temporaire."));
+    }
+  }
 
   async function enregistrer() {
     const lie = formulaire.role === "ENSEIGNANT" || formulaire.role === "PROFESSEUR_PRINCIPAL";
@@ -412,6 +424,7 @@ export function UtilisateursPage() {
     <GardeRole roles={["ADMIN"]}>
       <PageHeader titre="Utilisateurs" action={<Button onClick={() => setOuvert(true)}>Ajouter un utilisateur</Button>} />
       {motDePasse ? <div className="mb-4"><Banner ton="warning">Mot de passe temporaire : {motDePasse}. Il ne sera plus affiché.</Banner></div> : null}
+      {erreurAction ? <div className="mb-4"><Banner ton="danger">{erreurAction}</Banner></div> : null}
       <QueryGate loading={utilisateurs.loading} error={utilisateurs.error} onRetry={utilisateurs.retry} hasData={utilisateurs.data !== null}>
         <table className="w-full text-sm">
           <thead>
@@ -439,7 +452,7 @@ export function UtilisateursPage() {
                   <button
                     type="button"
                     className="ml-3 text-primary"
-                    onClick={() => void api.motDePasseTemporaire(utilisateur.id).then((reponse) => setMotDePasse(reponse.motDePasseTemporaire))}
+                    onClick={() => void definirTemporaire(utilisateur.id)}
                   >
                     Définir un nouveau mot de passe temporaire
                   </button>
@@ -506,9 +519,10 @@ export function ProfilPage() {
       </dl>
       <form className="mt-6 space-y-4" onSubmit={(event) => { event.preventDefault(); void enregistrer(); }}>
         <h2 className="text-lg font-semibold">Mot de passe</h2>
+        {erreur ? <Banner ton="danger">{erreur}</Banner> : null}
         <TextField id="mdp-actuel" label="Mot de passe actuel" type="password" obligatoire value={actuel} onChange={(event) => setActuel(event.target.value)} />
         <TextField id="mdp-nouveau" label="Nouveau mot de passe" type="password" obligatoire value={suivant} onChange={(event) => setSuivant(event.target.value)} />
-        <TextField id="mdp-confirmation" label="Confirmation" type="password" obligatoire erreur={erreur ?? undefined} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
+        <TextField id="mdp-confirmation" label="Confirmation" type="password" obligatoire value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
         <Button type="submit">Enregistrer</Button>
       </form>
     </div>

@@ -10,7 +10,9 @@ Revue faite sur la branche d'intégration, contre PostgreSQL local et le code se
 | `PATCH /api/utilisateurs/:id` changeait le mot de passe sans incrémenter `session_version`. L'ancienne session restait valable. | La version de session est incrémentée quand le mot de passe change. La déconnexion et le mot de passe temporaire le faisaient déjà. |
 | La limite de 30 recherches par minute ne couvrait que la liste des élèves. | Le même compteur s'applique à la recherche des classes, des évaluations et des matières. |
 | `GET /api/health` ne prouvait pas que la base répondait. | La route exécute `select 1` et renvoie `database: ok` ou `503`. |
-| Limite de connexion en mémoire, par instance, sans remise à zéro de la fenêtre. Les changements de mot de passe n'étaient pas bornés. `POST /api/notes/valider` n'était pas borné et écrivait une ligne d'audit à chaque appel. | Compteurs dans `limite_tentative` (migration `0003`), fenêtre glissante, couple e-mail+IP et IP, remise à zéro après succès ou expiration. Même limiteur sur les routes de mot de passe et sur la validation (utilisateur de session et IP). L'audit de validation ne garde qu'un passage par état. |
+| Limite de connexion en mémoire, par instance, sans remise à zéro de la fenêtre. Les changements de mot de passe n'étaient pas bornés. `POST /api/notes/valider` n'était pas borné et écrivait une ligne d'audit à chaque appel. | Compteurs dans `limite_tentative` (migration `0003`), fenêtre glissante, couple e-mail+IP et IP, remise à zéro après succès ou expiration. Même forme de `429` (`TROP_DE_TENTATIVES`) sur la connexion, les mots de passe et la validation. L'audit de validation ne garde qu'un passage par état. |
+| `/api/auth/[...nextauth]` authentifiait tout le monde avec l'IP constante `authjs`. | Route retirée. Connexion, déconnexion et session restent `/api/auth/login`, `/logout` et `/session`. |
+| L'émission d'un mot de passe temporaire partageait le plafond de 5 essais. | Plafond distinct `TEMP_PASSWORD_RATE_LIMIT_*` (défaut 30 / 60 / 15 min), clés HMAC séparées, toujours borné. |
 
 ## Contrôles vérifiés
 

@@ -48,6 +48,14 @@ function passwordConfig() {
   };
 }
 
+function temporaryPasswordConfig() {
+  return {
+    windowSeconds: boundedInt("TEMP_PASSWORD_RATE_LIMIT_WINDOW_SECONDS", WINDOW_PASSWORD_SECONDS, 1, 24 * 60 * 60),
+    subjectMax: boundedInt("TEMP_PASSWORD_RATE_LIMIT_MAX", 30, 1, 1000),
+    ipMax: boundedInt("TEMP_PASSWORD_RATE_LIMIT_IP_MAX", 60, 1, 10_000),
+  };
+}
+
 function validationConfig() {
   return {
     windowSeconds: boundedInt("VALIDATION_RATE_LIMIT_WINDOW_SECONDS", WINDOW_VALIDATION_SECONDS, 1, 24 * 60 * 60),
@@ -71,17 +79,28 @@ function normalizeIp(ip: string): string {
   return value;
 }
 
+/** Corps unique des 429. Pas de `details`, message sans détail technique. */
+export const ERREUR_TROP_DE_TENTATIVES = {
+  code: "TROP_DE_TENTATIVES",
+  message: "Trop de tentatives. Réessayez plus tard.",
+} as const;
+
+function delaiSecondes(untilMs: number): number {
+  const seconds = Math.ceil((untilMs - Date.now()) / 1000);
+  if (!Number.isInteger(seconds) || seconds < 1) return 1;
+  return seconds;
+}
+
 function rateLimited(oldest: Date | null, windowSeconds: number): never {
-  const retryAfter = oldest
-    ? Math.max(1, Math.ceil((oldest.getTime() + windowSeconds * 1000 - Date.now()) / 1000))
-    : windowSeconds;
-  throw new ApiError(429, "RATE_LIMITED", "Trop de tentatives. Réessayez plus tard.", undefined, retryAfter);
+  const retryAfter = oldest ? delaiSecondes(oldest.getTime() + windowSeconds * 1000) : windowSeconds;
+  throw new ApiError(429, ERREUR_TROP_DE_TENTATIVES.code, ERREUR_TROP_DE_TENTATIVES.message, undefined, retryAfter);
 }
 
 async function pruneExpired(): Promise<void> {
   const horizon = Math.max(
     loginConfig().windowSeconds,
     passwordConfig().windowSeconds,
+    temporaryPasswordConfig().windowSeconds,
     validationConfig().windowSeconds,
   );
   await getDb().execute(sql`
@@ -210,6 +229,43 @@ export async function recordPasswordChangeSuccess(userId: string): Promise<void>
     .where(and(eq(limiteTentative.portee, PASSWORD_SUBJECT), eq(limiteTentative.sujet, sujet)));
 }
 
+const TEMP_SUBJECT = "mot_de_passe_temporaire";
+const TEMP_IP = "mot_de_passe_temporaire_ip";
+
+/**
+ * Mot de passe temporaire : mêmes portées que le changement de mot de passe,
+ * clés HMAC distinctes. Le plafond (défaut 30 / 60 / 15 min) ne partage pas
+ * le compteur des 5 essais. Chaque émission compte, y compris un succès.
+ */
+function temporaryPasswordParts(actorId: string, ip: string) {
+  const address = normalizeIp(ip);
+  return {
+    cle: digest(TEMP_SUBJECT, `${actorId}|${address}`),
+    sujet: digest(`${TEMP_SUBJECT}_sujet`, actorId),
+    ipKey: digest(TEMP_IP, address),
+  };
+}
+
+export async function assertTemporaryPasswordAllowed(actorId: string, ip: string): Promise<void> {
+  const limits = temporaryPasswordConfig();
+  const parts = temporaryPasswordParts(actorId, ip);
+  await assertBuckets({
+    subjectPortee: PASSWORD_SUBJECT,
+    subjectKey: parts.cle,
+    subjectMax: limits.subjectMax,
+    ipPortee: PASSWORD_IP,
+    ipKey: parts.ipKey,
+    ipMax: limits.ipMax,
+    windowSeconds: limits.windowSeconds,
+  });
+}
+
+export async function recordTemporaryPasswordAttempt(actorId: string, ip: string): Promise<void> {
+  const parts = temporaryPasswordParts(actorId, ip);
+  await insertHit(PASSWORD_SUBJECT, parts.cle, parts.sujet);
+  await insertHit(PASSWORD_IP, parts.ipKey, null);
+}
+
 function validationParts(userId: string, ip: string) {
   const address = normalizeIp(ip);
   return {
@@ -242,23 +298,13 @@ export async function consumeValidationAttempt(userId: string, ip: string): Prom
 const writeBuckets = new Map<string, number[]>();
 const searchBuckets = new Map<string, number[]>();
 
-function retryAfter(until: number): number {
-  return Math.max(1, Math.ceil((until - Date.now()) / 1000));
-}
-
 function hit(bucket: Map<string, number[]>, key: string, limit: number): void {
   const now = Date.now();
   const recent = (bucket.get(key) ?? []).filter((stamp) => now - stamp < MINUTE_MS);
   if (recent.length >= limit) {
     bucket.set(key, recent);
     const oldest = recent[0] ?? now;
-    throw new ApiError(
-      429,
-      "RATE_LIMITED",
-      "Trop de tentatives. Réessayez plus tard.",
-      undefined,
-      retryAfter(oldest + MINUTE_MS),
-    );
+    rateLimited(new Date(oldest), 60);
   }
   recent.push(now);
   bucket.set(key, recent);

@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SaisieNotes } from "@/components/grades/saisie-notes";
+import { ApiError } from "@/lib/api-client";
 import type { GrilleNotes, LigneGrille } from "@/lib/api-client/types";
 import { appreciate, computeSubjectAverage } from "@/lib/grading";
 import { formatMoyenne } from "@/lib/format";
@@ -157,6 +158,18 @@ describe("grille de saisie", () => {
       { score: 5, maxScore: 10, coefficient: 1 },
     ]);
     expect(screen.getByText(libelleApercu(resultat.value))).toBeInTheDocument();
+  });
+
+  it("affiche le message du 429 de validation", async () => {
+    const user = userEvent.setup();
+    const onEnregistrer = vi.fn().mockRejectedValue(
+      new ApiError(429, "TROP_DE_TENTATIVES", "Trop de tentatives. Réessayez plus tard."),
+    );
+    render(<SaisieNotes grille={grille()} onEnregistrer={onEnregistrer} />);
+    await user.type(screen.getByRole("textbox", { name: "Note de Martin Camille" }), "12");
+    await user.click(screen.getByRole("button", { name: "Enregistrer" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Trop de tentatives. Réessayez plus tard.");
+    expect(screen.getByRole("textbox", { name: "Note de Martin Camille" })).toHaveValue("12");
   });
 
   it("reste en lecture seule sans champ éditable", () => {

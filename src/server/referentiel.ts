@@ -23,8 +23,10 @@ import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import {
   assertPasswordChangeAllowed,
   assertSearchRate,
+  assertTemporaryPasswordAllowed,
   recordPasswordChangeAttempt,
   recordPasswordChangeSuccess,
+  recordTemporaryPasswordAttempt,
 } from "@/lib/auth/rate-limit";
 import { getDb } from "./db";
 import { ApiError, forbidden, notFound } from "./errors";
@@ -544,11 +546,11 @@ export async function changerMotDePasse(session: SessionUser, body: unknown, ip:
 
 export async function definirMotDePasseTemporaire(session: SessionUser, id: string, ip: string) {
   assertWriteReferential(session);
-  await assertPasswordChangeAllowed(session.id, ip);
+  await assertTemporaryPasswordAllowed(session.id, ip);
   const db = getDb();
   const [current] = await db.select().from(utilisateur).where(eq(utilisateur.id, id)).limit(1);
   if (!current) {
-    await recordPasswordChangeAttempt(session.id, ip);
+    await recordTemporaryPasswordAttempt(session.id, ip);
     throw notFound("Utilisateur introuvable.");
   }
   const motDePasseTemporaire = `Tmp-${randomBytes(9).toString("base64url")}`;
@@ -559,7 +561,7 @@ export async function definirMotDePasseTemporaire(session: SessionUser, id: stri
       sessionVersion: sql`${utilisateur.sessionVersion} + 1`,
     })
     .where(eq(utilisateur.id, id));
-  await recordPasswordChangeAttempt(session.id, ip);
+  await recordTemporaryPasswordAttempt(session.id, ip);
   await writeAudit({
     type: "MOT_DE_PASSE",
     acteurId: session.id,

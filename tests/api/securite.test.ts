@@ -37,7 +37,9 @@ describe("contrôles de sécurité observables", () => {
     }
     const bloque = await call(getEleves, "/api/eleves?q=encore", { cookie: admin });
     expect(bloque.status).toBe(429);
-    expect(bloque.headers.get("retry-after")).toBeTruthy();
-    expect(JSON.stringify(await jsonOf(bloque))).not.toMatch(/motDePasse|SELECT|password/i);
+    expect(bloque.headers.get("retry-after")).toMatch(/^[1-9]\d*$/);
+    expect(await jsonOf(bloque)).toEqual({
+      error: { code: "TROP_DE_TENTATIVES", message: "Trop de tentatives. Réessayez plus tard." },
+    });
   });
 });
