@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
+import { Banner } from "@/components/ui/banner";
 
 export function Dialog({
   ouvert,
@@ -10,6 +11,8 @@ export function Dialog({
   confirmerLabel,
   annulerLabel = "Annuler",
   danger = false,
+  busy = false,
+  erreur = null,
   onConfirmer,
   onAnnuler,
 }: {
@@ -19,6 +22,8 @@ export function Dialog({
   confirmerLabel: string;
   annulerLabel?: string;
   danger?: boolean;
+  busy?: boolean;
+  erreur?: string | null;
   onConfirmer: () => void;
   onAnnuler: () => void;
 }) {
@@ -27,8 +32,10 @@ export function Dialog({
   const confirmerRef = useRef<HTMLButtonElement>(null);
 
   const annulerCallback = useRef(onAnnuler);
+  const busyRef = useRef(busy);
   useEffect(() => {
     annulerCallback.current = onAnnuler;
+    busyRef.current = busy;
   });
 
   useEffect(() => {
@@ -41,7 +48,9 @@ export function Dialog({
     function surClavier(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        annulerCallback.current();
+        if (!busyRef.current) {
+          annulerCallback.current();
+        }
         return;
       }
       if (event.key !== "Tab" || !panneau.current) {
@@ -89,11 +98,16 @@ export function Dialog({
         <p id="dialogue-description" className="mt-2 text-sm text-muted">
           {description}
         </p>
-        <div className="mt-5 flex justify-end gap-2">
-          <Button ref={annulerRef} variant={danger ? "primary" : "secondary"} onClick={onAnnuler}>
+        {erreur ? (
+          <div className="mt-3">
+            <Banner ton="danger">{erreur}</Banner>
+          </div>
+        ) : null}
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <Button ref={annulerRef} variant={danger ? "primary" : "secondary"} onClick={onAnnuler} disabled={busy}>
             {annulerLabel}
           </Button>
-          <Button ref={confirmerRef} variant={danger ? "danger" : "primary"} onClick={onConfirmer}>
+          <Button ref={confirmerRef} variant={danger ? "danger" : "primary"} onClick={onConfirmer} busy={busy}>
             {confirmerLabel}
           </Button>
         </div>

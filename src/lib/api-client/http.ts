@@ -19,7 +19,19 @@ const MESSAGES: Record<string, string> = {
   CONFLIT: "Cet enregistrement existe déjà.",
   VALIDATION: "Données invalides.",
   RATE_LIMITED: "Trop de tentatives. Réessayez plus tard.",
+  REOUVERTURE_INTERDITE: "Seule l'administration peut rouvrir une année clôturée.",
+  ELEVE_DEJA_NOTE: "Impossible de déplacer un élève qui possède déjà des notes.",
+  NOTE_MAX_FIGEE:
+    "Impossible de modifier la classe, la matière, la période ou la note maximale tant que des notes existent.",
+  EVALUATION_DEJA_NOTEE:
+    "Impossible de modifier la classe, la matière, la période ou la note maximale tant que des notes existent.",
 };
+
+/** Textes d'état déjà connus par l'interface (statut d'année, nombre de saisies). Le refus renvoyé par l'API s'affiche via `error.message`. */
+export const TEXTE_REOUVERTURE_INTERDITE = MESSAGES.REOUVERTURE_INTERDITE;
+export const TEXTE_EVALUATION_DEJA_NOTEE = MESSAGES.EVALUATION_DEJA_NOTEE;
+export const TEXTE_ECHEC_ENREGISTREMENT =
+  "L'enregistrement a échoué. Vos saisies sont encore sur cette page. Réessayez.";
 
 const ALIAS_CODE: Record<string, string> = {
   INVALID_CREDENTIALS: "IDENTIFIANTS_INVALIDES",
@@ -50,6 +62,14 @@ export function messageUtilisateur(error: unknown, repli = "Impossible de charge
     return repli;
   }
   return repli;
+}
+
+/** Message d'un enregistrement refusé : `error.message` tel quel, ou le repli réseau si l'appel n'a pas abouti. */
+export function messageEchecEnregistrement(error: unknown): string {
+  if (error instanceof ApiError && error.status !== 0 && error.message.trim()) {
+    return error.message;
+  }
+  return TEXTE_ECHEC_ENREGISTREMENT;
 }
 
 export function listeQuery(

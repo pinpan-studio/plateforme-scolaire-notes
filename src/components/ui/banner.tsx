@@ -15,12 +15,23 @@ const TONS: Record<Ton, string> = {
 export function Banner({
   ton,
   children,
+  id,
+  className,
+  tabIndex,
 }: {
   ton: Ton;
   children: ReactNode;
+  id?: string;
+  className?: string;
+  tabIndex?: number;
 }) {
   return (
-    <p role={ton === "danger" ? "alert" : "status"} className={cx("rounded-lg border px-3 py-2 text-sm", TONS[ton])}>
+    <p
+      id={id}
+      role={ton === "danger" ? "alert" : "status"}
+      tabIndex={tabIndex}
+      className={cx("rounded-lg border px-3 py-2 text-sm", TONS[ton], className)}
+    >
       {children}
     </p>
   );

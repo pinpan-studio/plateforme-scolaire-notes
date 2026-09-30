@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { api, indexErreurs, messageUtilisateur } from "@/lib/api-client";
+import { useRef, useState } from "react";
+import { api, indexErreurs, messageEchecEnregistrement, messageUtilisateur, TEXTE_REOUVERTURE_INTERDITE } from "@/lib/api-client";
 import type { Role } from "@/lib/api-client/types";
 import { formatDate } from "@/lib/format";
 import { libelleAnnee } from "@/lib/labels";
@@ -33,6 +33,10 @@ export function AnneesPage() {
   const [dateFin, setDateFin] = useState("");
   const [erreurs, setErreurs] = useState<Record<string, string>>({});
   const [cible, setCible] = useState<{ id: string; action: "activer" | "cloturer" } | null>(null);
+  const [erreurAction, setErreurAction] = useState<string | null>(null);
+  const [actionEnCours, setActionEnCours] = useState(false);
+  const verrouAction = useRef(false);
+  const reouvertureReservee = session.utilisateur.role !== "ADMIN" && (annees.data ?? []).some((annee) => annee.statut === "CLOTUREE");
 
   async function enregistrer() {
     const suivants: Record<string, string> = {};
@@ -50,25 +54,49 @@ export function AnneesPage() {
     }
   }
 
+  function ouvrirAction(id: string, action: "activer" | "cloturer") {
+    setErreurAction(null);
+    setCible({ id, action });
+  }
+
   async function confirmer() {
-    if (!cible) return;
+    if (!cible || verrouAction.current) return;
+    verrouAction.current = true;
+    setActionEnCours(true);
+    setErreurAction(null);
     try {
       if (cible.action === "activer") await api.activerAnnee(cible.id);
       else await api.cloturerAnnee(cible.id);
+      const action = cible.action;
       setCible(null);
+      setErreurAction(null);
       annees.retry();
-      toast(cible.action === "activer" ? "Année activée." : "Année clôturée.");
+      toast(action === "activer" ? "Année activée." : "Année clôturée.");
     } catch (error) {
-      setErreurs({ formulaire: messageUtilisateur(error) });
-      setCible(null);
+      setErreurAction(messageEchecEnregistrement(error));
+    } finally {
+      verrouAction.current = false;
+      setActionEnCours(false);
     }
+  }
+
+  function annulerAction() {
+    if (actionEnCours) return;
+    setCible(null);
+    setErreurAction(null);
   }
 
   return (
     <GardeRole roles={["ADMIN", "DIRECTION"]}>
       <PageHeader titre="Années scolaires" action={ecriture ? <Button onClick={() => setOuvert(true)}>Ajouter une année</Button> : undefined} />
       <QueryGate loading={annees.loading} error={annees.error} onRetry={annees.retry} hasData={annees.data !== null}>
-        <table className="w-full text-sm">
+        {reouvertureReservee ? (
+          <Banner id="reouverture-interdite" ton="warning">
+            {TEXTE_REOUVERTURE_INTERDITE}
+          </Banner>
+        ) : null}
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[36rem] text-sm">
           <thead>
             <tr>
               <th scope="col" className="border-b border-border py-2 text-left">Libellé</th>
@@ -86,15 +114,36 @@ export function AnneesPage() {
                 <td>{formatDate(annee.dateFin)}</td>
                 <td><Badge ton={annee.statut === "EN_COURS" ? "success" : annee.statut === "CLOTUREE" ? "neutral" : "warning"}>{libelleAnnee(annee.statut)}</Badge></td>
                 {ecriture ? (
-                  <td className="space-x-2">
-                    {annee.statut !== "EN_COURS" ? <button type="button" className="text-primary" onClick={() => setCible({ id: annee.id, action: "activer" })}>Activer</button> : null}
-                    {annee.statut !== "CLOTUREE" ? <button type="button" className="text-danger" onClick={() => setCible({ id: annee.id, action: "cloturer" })}>Clôturer</button> : null}
+                  <td className="space-x-3 whitespace-nowrap">
+                    {annee.statut !== "EN_COURS" ? (
+                      annee.statut === "CLOTUREE" && session.utilisateur.role !== "ADMIN" ? (
+                        <button
+                          type="button"
+                          className="cursor-not-allowed text-muted"
+                          aria-disabled="true"
+                          aria-describedby="reouverture-interdite"
+                          onClick={(event) => event.preventDefault()}
+                        >
+                          Activer
+                        </button>
+                      ) : (
+                        <button type="button" className="text-primary" onClick={() => ouvrirAction(annee.id, "activer")}>
+                          Activer
+                        </button>
+                      )
+                    ) : null}
+                    {annee.statut !== "CLOTUREE" ? (
+                      <button type="button" className="text-danger" onClick={() => ouvrirAction(annee.id, "cloturer")}>
+                        Clôturer
+                      </button>
+                    ) : null}
                   </td>
                 ) : null}
               </tr>
             ))}
           </tbody>
         </table>
+        </div>
         {annees.data && annees.data.length === 0 ? <p className="mt-4 text-sm text-muted">Aucune année scolaire.</p> : null}
       </QueryGate>
       <Drawer ouvert={ouvert} titre="Ajouter une année" onFermer={() => setOuvert(false)} onSubmit={() => void enregistrer()} erreurs={Object.values(erreurs)}>
@@ -108,7 +157,9 @@ export function AnneesPage() {
         description={cible?.action === "cloturer" ? "Les saisies de cette année deviennent en lecture seule, sauf correction autorisée." : "Une seule année peut être active."}
         confirmerLabel={cible?.action === "cloturer" ? "Clôturer" : "Activer"}
         danger={cible?.action === "cloturer"}
-        onAnnuler={() => setCible(null)}
+        busy={actionEnCours}
+        erreur={erreurAction}
+        onAnnuler={annulerAction}
         onConfirmer={() => void confirmer()}
       />
     </GardeRole>

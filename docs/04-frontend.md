@@ -125,6 +125,13 @@ Champs utiles selon le rôle, tous présents (liste vide ou `null` si sans objet
 | `NOTE_DOUBLON` | Cette note existe déjà. Rechargez la page. |
 | `SUPPRESSION_IMPOSSIBLE` | Des notes sont déjà saisies. La suppression est impossible. |
 | `PERIODE_CLOTUREE` | Période clôturée. Les notes ne sont plus modifiables. |
+| `REOUVERTURE_INTERDITE` | Seule l'administration peut rouvrir une année clôturée. |
+| `ELEVE_DEJA_NOTE` | Impossible de déplacer un élève qui possède déjà des notes. |
+| `NOTE_MAX_FIGEE`, `EVALUATION_DEJA_NOTEE` | Impossible de modifier la classe, la matière, la période ou la note maximale tant que des notes existent. |
+
+Ces quatre messages sont ceux de `error.message`. L'interface les affiche tels quels. Le repli de la table ne sert que si le corps n'a pas de message. `FORBIDDEN` sur `PATCH /api/annees/:id` reste « Action interdite pour ce rôle. »
+
+Quand l'année est `CLOTUREE` et que le rôle n'est pas `ADMIN`, le bouton Activer reste visible mais inactif, avec ce texte. Quand `saisies` est supérieur à 0, la classe, la matière, la période et la note maximale du formulaire d'évaluation sont désactivées, avec le même texte. La fiche élève ne désactive pas la classe : l'API n'expose pas « notes dans la classe quittée » (l'historique mélange toutes les notes de l'élève).
 
 Échec réseau au chargement : « Impossible de charger les données. » Échec réseau à l'enregistrement des notes : « L'enregistrement a échoué. Vos saisies sont encore sur cette page. Réessayez. »
 
