@@ -236,14 +236,24 @@ Calculés à la lecture, sur les notes PostgreSQL, uniquement par `src/lib/gradi
 
 | Méthode | Route | Contenu |
 | --- | --- | --- |
-| GET | `/api/bulletins?eleveId&periodeId` | lignes de matières, moyenne générale, appréciation, rang, effectif. Sans `periodeId` : l'année de l'inscription |
+| GET | `/api/bulletins?eleveId&periodeId` | lignes de matières, moyenne générale, appréciation, rang, effectif, effectif classé. Sans `periodeId` : l'année de l'inscription |
 | GET | `/api/analyses/eleve?eleveId&periodeId` | même document |
 | GET | `/api/analyses/classe?classeId&periodeId&matiereId` | élèves, moyennes, statistiques de classe |
 | GET | `/api/analyses/matiere?classeId&matiereId&periodeId` | moyennes de la matière, absences, part sous 10 |
 | GET | `/api/analyses/temporelle?eleveId` ou `classeId` | un point par trimestre |
 | GET | `/api/analyses/etablissement?anneeScolaireId&periodeId` | moyennes par classe et de l'établissement |
 
-Un enseignant reçoit les matières de ses affectations, sans moyenne générale ni rang calculés sur les autres matières. Le professeur principal de la classe reçoit le bulletin complet. Le rang est `rankCompetition` : les moyennes publiées au même centième sont ex æquo et le rang suivant est sauté (1, 1, 3 si l'égalité est en tête ; 1, 2, 2, 4 si elle est en deuxième place).
+Un enseignant reçoit les matières de ses affectations, sans moyenne générale ni rang général calculés sur les autres matières. Le professeur principal de la classe reçoit le bulletin complet. Le rang est `rankCompetition` sur les moyennes déjà publiées par `computePeriodReport`, pour tous les élèves `INSCRIT` de la classe et de la période : les moyennes au même centième sont ex æquo et le rang suivant est sauté (1, 1, 3 si l'égalité est en tête ; 1, 2, 2, 4 si elle est en deuxième place). Un élève sans moyenne n'est pas classé et ne décale pas les autres.
+
+Champs ajoutés, sans renommage :
+
+| Champ | Type | Sens |
+| --- | --- | --- |
+| `effectifClasse` | `number \| null` | Élèves de la classe qui ont une moyenne générale publiée. `null` quand le bulletin est réduit aux matières de l'enseignant. `effectif` reste le nombre d'inscrits. |
+| `lignes[].rang` | `number \| null` | Rang de compétition dans la matière. `null` si l'élève n'a pas de moyenne de matière. |
+| `lignes[].effectifClasse` | `number` | Élèves de la classe qui ont une moyenne publiée dans cette matière. `0` si personne n'est classé. |
+
+Le rang de matière est calculé sur la classe entière, y compris pour un enseignant qui ne voit que ses matières. La réponse ne contient ni les noms ni les notes des camarades. L'analyse de classe reprend `effectifClasse` et `matieres[].rang` / `matieres[].effectifClasse`. L'analyse de matière ajoute `eleves[].effectifClasse`.
 
 Statistiques : `computeStatistics` sur les moyennes déjà publiées. La réponse expose l'effectif, le nombre de moyennes calculables, la moyenne de classe, le minimum, le maximum, la médiane, le taux de réussite (≥ 10) et la distribution des six mentions du module. L'analyse temporelle ajoute `comparaison`, le résultat de `compareTerms` (écarts, tendance, plus haut et plus bas trimestre). L'analyse matière ajoute le rang dans la matière.
 

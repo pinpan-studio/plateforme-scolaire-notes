@@ -404,6 +404,7 @@ export const api = {
         moyenne: ligne.moyenneGenerale,
         rang: ligne.rang,
         effectif: ligne.effectif,
+        effectifClasse: ligne.effectifClasse,
         appreciation: ligne.appreciation,
         appreciationGenerale: ligne.appreciationGenerale,
         appreciationManquante: !ligne.appreciationGenerale,
@@ -460,6 +461,7 @@ export const api = {
             moyenneGenerale: numOrNull(document.moyenneGenerale),
             rang: numOrNull(document.rang),
             effectif: num(document.effectif),
+            effectifClasse: numOrNull(document.effectifClasse),
             appreciation: str(document.appreciation),
             matieresSansNote: lignes.filter((ligne) => ligne.moyenne === null).length,
             matieres: lignes,
@@ -620,6 +622,7 @@ export const api = {
       matieres,
       moyenneGenerale: numOrNull(document.moyenneGenerale),
       rang: numOrNull(document.rang),
+      effectifClasse: numOrNull(document.effectifClasse),
       appreciation: str(document.appreciation),
       appreciationGenerale: null,
       peutRedigerAppreciation: session?.utilisateur.role === "ADMIN" || session?.utilisateur.role === "PROFESSEUR_PRINCIPAL",
@@ -688,6 +691,7 @@ function mapMatiereResultat(row: unknown) {
     moyenne: numOrNull(item.moyenne),
     appreciation: str(item.appreciation),
     rang: numOrNull(item.rang),
+    effectifClasse: num(item.effectifClasse),
   };
 }
 
@@ -770,6 +774,7 @@ async function chargerResultats(params: ListeParams): Promise<ResultatsClasse> {
       moyenneGenerale: numOrNull(item.moyenneGenerale),
       rang: numOrNull(item.rang),
       effectif: eleves.length,
+      effectifClasse: numOrNull(item.effectifClasse),
       appreciation: str(item.appreciation),
       appreciationGenerale: texteParEleve.get(str(item.eleveId)) ?? null,
       matieresSansNote: matieres.filter((matiere) => matiere.moyenne === null).length,
