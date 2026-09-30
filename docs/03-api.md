@@ -50,7 +50,8 @@ Réponse `200` : `{ "utilisateur": { "id", "email", "role", "enseignantId", "pre
 | 403 | `CSRF` | `Origin` hostile ou `Sec-Fetch-Site: cross-site` |
 | 403 | `ACCOUNT_DISABLED` | Connexion d'un compte inactif |
 | 404 | `NOT_FOUND` | Identifiant inconnu |
-| 409 | `CONFLIT` | Unicité, version périmée, suppression encore référencée |
+| 409 | `CONFLIT` | Unicité, suppression encore référencée |
+| 409 | `CONFLIT_VERSION` | Version de note périmée (`PATCH`, `DELETE` ou lot). Le corps contient `conflits`, jamais la valeur |
 | 422 | `VALIDATION` | Zod, barème, inscription, règle de gestion |
 | 429 | `RATE_LIMITED` | Login, recherche ou écriture de notes |
 | 500 | `ERREUR_INTERNE` | Message générique, sans pile ni SQL |
@@ -206,9 +207,9 @@ Le mot de passe initial fait au moins 12 caractères. Le changement exige `motDe
 | --- | --- | --- |
 | GET | `/api/notes?evaluationId&eleveId&classeId&matiereId` | lecture selon le périmètre |
 | POST | `/api/notes` | création. Doublon élève+évaluation : `409` |
-| POST | `/api/notes/lot` | création ou mise à jour, une transaction |
-| POST | `/api/notes/valider` | mêmes contrôles, aucune écriture de note |
-| GET, PATCH, DELETE | `/api/notes/:id` | `version` optionnelle, `409` si elle ne correspond plus |
+| POST | `/api/notes/lot` | création ou mise à jour, une transaction, `version` obligatoire par ligne |
+| POST | `/api/notes/valider` | mêmes contrôles de forme et de périmètre, aucune écriture de note |
+| GET, PATCH, DELETE | `/api/notes/:id` | `PATCH` et `DELETE` : `version` obligatoire, `409` `CONFLIT_VERSION` si elle ne correspond plus |
 
 ```json
 { "evaluationId": "…", "eleveId": "…", "valeur": 15, "estAbsent": false, "commentaire": null }
@@ -216,19 +217,49 @@ Le mot de passe initial fait au moins 12 caractères. Le changement exige `motDe
 
 Absence : `{ "valeur": null, "estAbsent": true }`. `0` est une note. Plus de deux décimales, valeur négative, valeur au-dessus de `noteMax`, ou élève non `INSCRIT` dans la classe : `422`.
 
+`PATCH` et `DELETE` exigent `version`, l'horodatage ISO-8601 renvoyé par `GET` (`updated_at`, millisecondes UTC). Sans ce champ, ou avec un horodatage illisible : `422` `VALIDATION`, chemin `version`. `DELETE` envoie `{ "version": "…" }`. La comparaison, la relecture de l'année et de l'affectation, puis l'écriture ont lieu dans la même transaction. Ordre de verrous : évaluations `FOR UPDATE` (id), notes `FOR UPDATE` (id), années `FOR SHARE` (id), affectations `FOR SHARE` (id). Une année clôturée ou une affectation retirée entre le premier contrôle et l'écriture est refusée (`403`) et rien n'est écrit.
+
+`POST /api/notes` sur un couple élève+évaluation déjà noté répond `409` `CONFLIT` (« Cette note existe déjà. ») sans remplacer la valeur. Le contrôle est sous le même verrou d'évaluation.
+
+Un lot compte au plus 100 lignes (`422` « Lot trop volumineux. » au-delà), le même plafond que la page de la grille. Le rejet a lieu dans Zod, avant tout verrou.
+
 Lot :
 
 ```json
 {
   "evaluationId": "…",
   "lignes": [
-    { "eleveId": "…", "valeur": 15, "estAbsent": false },
-    { "eleveId": "…", "valeur": null, "estAbsent": true }
+    { "eleveId": "…", "valeur": 15, "estAbsent": false, "version": null },
+    { "eleveId": "…", "valeur": 12, "estAbsent": false, "version": "2026-09-30T09:16:00.123Z" }
   ]
 }
 ```
 
-Une ligne peut porter son propre `evaluationId`. Si l'une sort du périmètre, tout le lot est un `403`. Soixante écritures de notes par minute et par session ; le lot compte pour une requête. Trente recherches `q` par minute.
+`version` est obligatoire sur chaque ligne. `null` signifie « je n'ai pas vu de note » (création). Une chaîne est l'`updated_at` lu pour une mise à jour. Un champ manquant est un `422` (`lignes.N.version`, « Version requise. »). Le lot est atomique : une ligne invalide (`422`), hors affectation (`403`) ou en conflit (`409`) n'écrit rien.
+
+Conflit de version, identique pour le `PATCH`, le `DELETE` (`index` vaut alors `null`) et pour le lot :
+
+```json
+{
+  "error": {
+    "code": "CONFLIT_VERSION",
+    "message": "Une ou plusieurs notes ont été modifiées. Rechargez avant d'enregistrer.",
+    "conflits": [
+      {
+        "index": 1,
+        "noteId": "00000000-0000-4000-8000-000000000010",
+        "eleveId": "00000000-0000-4000-8000-000000000011",
+        "evaluationId": "00000000-0000-4000-8000-000000000012",
+        "version": "2026-09-30T09:16:00.456Z"
+      }
+    ]
+  }
+}
+```
+
+`conflits` énumère toutes les lignes en écart, pas seulement la première. `noteId` et `version` décrivent l'état courant : les deux sont `null` si la note a disparu. `version` est l'`updated_at` courant en ISO-8601. Le corps ne contient ni `valeur`, ni commentaire, ni identité d'un autre enseignant. Le rôle vient de la session : un champ `role` dans le JSON est un `422`.
+
+Une ligne peut porter son propre `evaluationId`. Si l'une sort du périmètre, tout le lot est un `403` sans `conflits`. Soixante écritures de notes par minute et par session ; le lot compte pour une requête. Trente recherches `q` par minute.
 
 ### Bulletins et analyses
 

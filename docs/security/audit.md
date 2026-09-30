@@ -10,10 +10,12 @@ Revue faite sur la branche d'intégration, contre PostgreSQL local et le code se
 | `PATCH /api/utilisateurs/:id` changeait le mot de passe sans incrémenter `session_version`. L'ancienne session restait valable. | La version de session est incrémentée quand le mot de passe change. La déconnexion et le mot de passe temporaire le faisaient déjà. |
 | La limite de 30 recherches par minute ne couvrait que la liste des élèves. | Le même compteur s'applique à la recherche des classes, des évaluations et des matières. |
 | `GET /api/health` ne prouvait pas que la base répondait. | La route exécute `select 1` et renvoie `database: ok` ou `503`. |
+| Le lot de notes n'avait pas de contrôle de version, et `version` était facultative sur `PATCH /api/notes/:id`. | `version` est exigée par Zod. La comparaison et l'écriture partagent une transaction verrouillée. Un écart répond `409` `CONFLIT_VERSION` et le lot n'écrit rien. |
+| Une clôture d'année ou un retrait d'affectation entre le contrôle et l'écriture pouvait encore laisser passer une note. `DELETE /api/notes/:id` n'exigeait pas de version. Un lot n'avait pas de plafond. | L'année et l'affectation sont relues dans la transaction (`FOR SHARE`), après les verrous exclusifs. `DELETE` exige `version` et répond `409` `CONFLIT_VERSION`. Un lot de plus de 100 lignes est un `422` avant tout verrou. |
 
 ## Contrôles vérifiés
 
-Preuves dans `tests/api/auth.test.ts`, `tests/api/notes.test.ts`, `tests/api/securite.test.ts` et `tests/api/parcours.test.ts`, exécutés sur l'API réelle.
+Preuves dans `tests/api/auth.test.ts`, `tests/api/notes.test.ts`, `tests/api/notes-version.test.ts`, `tests/api/securite.test.ts` et `tests/api/parcours.test.ts`, exécutés sur l'API réelle.
 
 - Connexion valide, refus identique pour mot de passe faux et compte inconnu (`401`, message « Identifiants invalides »), compte désactivé `403` puis ancien cookie `401`.
 - Déconnexion et nouvelle connexion révoquent le cookie précédent via `session_version`. Session expirée : `401`. Durée absolue : 8 heures (`SESSION_MAX_AGE`).
@@ -21,7 +23,7 @@ Preuves dans `tests/api/auth.test.ts`, `tests/api/notes.test.ts`, `tests/api/sec
 - Origine `https://evil.example` sur une écriture : `403`. Cookie `HttpOnly`, `SameSite=Lax`, `Path=/`. `Secure` est ajouté quand `APP_URL` ou `AUTH_URL` est en `https`, ou quand `x-forwarded-proto` vaut `https`. En HTTP local, `Secure` est absent : exception de développement, pas le mode Vercel.
 - En-têtes : `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, CSP sans `script-src *`. En production le middleware pose un nonce et `strict-dynamic` pour que Next.js hydrate les pages sans `unsafe-inline` sur les scripts. `unsafe-eval` n'est ajouté qu'en `NODE_ENV=development` (serveur Next). `style-src 'unsafe-inline'` couvre le CSS injecté par Next.js. `X-Powered-By` retiré. HSTS (`max-age=15552000`) en production et dans `vercel.json`. La CSP des pages n'est pas dupliquée dans `vercel.json`, pour ne pas annuler le nonce.
 - Enseignant `nathan.durand` : `PATCH` d'une note de français hors affectation `403`, valeur inchangée, `GET` des notes de cette évaluation `403` sans champ `valeur`. Le lot de notes d'une évaluation non affectée est refusé en entier (`parcours`, intrusion `403`). Direction et consultation ne créent pas de note (`403`). Sans cookie : `401`.
-- Année clôturée : l'enseignant reçoit `403` sur la modification d'une note.
+- Année clôturée : l'enseignant reçoit `403` sur la modification d'une note. Une clôture engagée pendant que l'écriture attend le verrou de l'année est refusée, et la note ne change pas.
 - Réponses de connexion, de session et de `GET /api/utilisateurs` : aucune occurrence de `motDePasseHash`, `$2a$` / `$2b$`, `AUTH_SECRET` ou `DATABASE_URL`.
 - Recherche : le filtre `q` passe par un paramètre Drizzle (`ilike`), les jokers `%`, `_` et `\` sont échappés, la 31e recherche renvoie `429`. Une valeur `' OR 1=1 --` ne provoque pas d'erreur SQL.
 - `AUTH_SECRET` de moins de 32 caractères refuse de signer une session (`500` contrôlé, pas de cookie).
@@ -38,7 +40,6 @@ Le mot de passe `Demo-2026!` et ses hachages sont des fixtures de démonstration
 | Sévérité | Sujet | État |
 | --- | --- | --- |
 | Majeur | Limite de débit en mémoire, par instance. Deux instances Vercel ne partagent pas les compteurs. | Ouvert. Un magasin partagé (Redis) n'est pas branché. |
-| Majeur | Le lot de notes n'a pas de contrôle de version. Deux enregistrements rapprochés : le dernier écrase, sans `409`. Le `PATCH` unitaire, lui, compare `version`. | Ouvert. |
 | Majeur | Pas de rôle élève. `CONSULTATION` lit les notes de l'établissement. La matrice « élève / ses notes seulement » de la checklist ne s'applique pas. | Écart de modèle, assumé. |
 | Majeur | `DIRECTION` lit les notes mais ne crée pas d'élève (`403`). La checklist attendait un rôle scolarité autorisé à créer un élève. | Écart de modèle, assumé. Le test de parcours l'affirme. |
 | Majeur | Sauvegardes et chiffrement au repos : non réglés dans ce dépôt. Neon les fournit au niveau de l'hébergeur ; aucune preuve d'un réglage de projet. | Ouvert jusqu'au branchement Neon. |

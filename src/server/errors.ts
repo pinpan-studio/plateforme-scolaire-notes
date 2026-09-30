@@ -5,11 +5,23 @@ export type ErrorDetail = {
   message: string;
 };
 
+/** Ligne refusée par le contrôle de version. Aucune valeur de note n'y figure. */
+export type ConflitVersion = {
+  /** Index dans `lignes` pour un lot, `null` pour un PATCH ou un DELETE unitaire. */
+  index: number | null;
+  noteId: string | null;
+  eleveId: string;
+  evaluationId: string;
+  /** `updated_at` courant au format ISO-8601, ou `null` si la note n'existe plus. */
+  version: string | null;
+};
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly details?: ErrorDetail[];
   readonly retryAfter?: number;
+  readonly conflits?: ConflitVersion[];
 
   constructor(
     status: number,
@@ -17,6 +29,7 @@ export class ApiError extends Error {
     message: string,
     details?: ErrorDetail[],
     retryAfter?: number,
+    conflits?: ConflitVersion[],
   ) {
     super(message);
     this.name = "ApiError";
@@ -24,7 +37,19 @@ export class ApiError extends Error {
     this.code = code;
     this.details = details;
     this.retryAfter = retryAfter;
+    this.conflits = conflits;
   }
+}
+
+export function conflitVersion(conflits: ConflitVersion[]): ApiError {
+  return new ApiError(
+    409,
+    "CONFLIT_VERSION",
+    "Une ou plusieurs notes ont été modifiées. Rechargez avant d'enregistrer.",
+    undefined,
+    undefined,
+    conflits,
+  );
 }
 
 export function notFound(message = "Ressource introuvable."): ApiError {
@@ -129,6 +154,7 @@ export function toErrorBody(error: ApiError) {
       code: error.code,
       message: error.message,
       ...(error.details ? { details: error.details } : {}),
+      ...(error.conflits ? { conflits: error.conflits } : {}),
     },
   };
 }

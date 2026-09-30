@@ -571,13 +571,12 @@ export const api = {
   enregistrerNotes: async (evaluationId: string, lignes: LigneNoteEnvoi[]): Promise<EnregistrementNotes> => {
     const aSupprimer = lignes.filter((ligne) => ligne.supprimer);
     const aEcrire = lignes.filter((ligne) => !ligne.supprimer);
-    const actuelle = await chargerGrille(evaluationId);
-    const noteParEleve = new Map(actuelle.lignes.map((ligne) => [ligne.eleveId, ligne.noteId]));
     for (const ligne of aSupprimer) {
-      const noteId = noteParEleve.get(ligne.eleveId);
-      if (noteId) {
-        await apiFetch(`/api/notes/${noteId}`, { method: "DELETE" });
-      }
+      if (!ligne.noteId || ligne.version === null) continue;
+      await apiFetch(`/api/notes/${ligne.noteId}`, {
+        method: "DELETE",
+        body: JSON.stringify({ version: ligne.version }),
+      });
     }
     if (aEcrire.length > 0) {
       await apiFetch("/api/notes/lot", {
@@ -589,6 +588,7 @@ export const api = {
             valeur: ligne.absent ? null : ligne.valeur,
             estAbsent: ligne.absent,
             commentaire: ligne.commentaire,
+            version: ligne.version,
           })),
         }),
       });
@@ -735,6 +735,7 @@ async function chargerGrille(evaluationId: string): Promise<GrilleNotes> {
       absent: note ? bool(note.estAbsent) : false,
       commentaire: note ? strOrNull(note.commentaire) : null,
       noteId: note ? strOrNull(note.id) : null,
+      version: note ? strOrNull(note.version) : null,
     };
   });
   return {

@@ -205,6 +205,11 @@ const noteValeur = z
   .min(0, "La note ne peut pas être négative.")
   .refine((value) => decimales(value, 2), "Au plus 2 décimales.");
 
+/** Horodatage ISO renvoyé par l'API (`updated_at`). Absent du JSON : « Version requise. » */
+export const versionHorodatageSchema = z
+  .string({ error: "Version requise." })
+  .refine((value) => value.trim().length > 0 && !Number.isNaN(Date.parse(value)), "Horodatage invalide.");
+
 export const noteLigneSchema = z
   .object({
     evaluationId: uuidSchema.optional(),
@@ -212,6 +217,7 @@ export const noteLigneSchema = z
     valeur: noteValeur.nullable(),
     estAbsent: z.boolean({ error: "Présence ou absence requise." }),
     commentaire: z.string().trim().max(500, "Commentaire trop long.").nullable().optional(),
+    version: versionHorodatageSchema.nullable(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -246,14 +252,27 @@ export const patchNoteSchema = z
     valeur: noteValeur.nullable().optional(),
     estAbsent: z.boolean().optional(),
     commentaire: z.string().trim().max(500, "Commentaire trop long.").nullable().optional(),
-    version: z.string().optional(),
+    version: versionHorodatageSchema,
   })
   .strict();
+
+/**
+ * Plafond d'un lot : la grille charge au plus 100 élèves (pagination).
+ * Au-delà, la requête est refusée avant tout verrou, pour ne pas bloquer
+ * les autres saisies de la même évaluation.
+ */
+export const LOT_NOTES_MAX = 100;
 
 export const lotNotesSchema = z
   .object({
     evaluationId: uuidSchema.optional(),
-    lignes: z.array(noteLigneSchema).min(1, "Au moins une ligne.").max(200, "Lot trop volumineux."),
+    lignes: z.array(noteLigneSchema).min(1, "Au moins une ligne.").max(LOT_NOTES_MAX, "Lot trop volumineux."),
+  })
+  .strict();
+
+export const deleteNoteSchema = z
+  .object({
+    version: versionHorodatageSchema,
   })
   .strict();
 

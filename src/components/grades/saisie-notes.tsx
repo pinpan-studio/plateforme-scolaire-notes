@@ -181,12 +181,22 @@ export function SaisieNotes({
           absent: true,
           commentaire: videOuNull(brouillon.commentaire),
           supprimer: false,
+          version: ligne.version,
+          noteId: ligne.noteId ?? null,
         });
         continue;
       }
       const texte = brouillon.saisie.trim();
       if (!texte) {
-        envois.push({ eleveId: ligne.eleveId, valeur: null, absent: false, commentaire: null, supprimer: true });
+        envois.push({
+          eleveId: ligne.eleveId,
+          valeur: null,
+          absent: false,
+          commentaire: null,
+          supprimer: true,
+          version: ligne.version,
+          noteId: ligne.noteId ?? null,
+        });
         continue;
       }
       envois.push({
@@ -195,6 +205,8 @@ export function SaisieNotes({
         absent: false,
         commentaire: videOuNull(brouillon.commentaire),
         supprimer: false,
+        version: ligne.version,
+        noteId: ligne.noteId ?? null,
       });
     }
     return envois;

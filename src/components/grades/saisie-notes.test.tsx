@@ -7,8 +7,8 @@ import { appreciate, computeSubjectAverage } from "@/lib/grading";
 import { formatMoyenne } from "@/lib/format";
 
 const eleves: LigneGrille[] = [
-  { eleveId: "1", matricule: "A1", nom: "Martin", prenom: "Camille", valeur: null, absent: false, commentaire: null },
-  { eleveId: "2", matricule: "A2", nom: "Durand", prenom: "Léa", valeur: null, absent: false, commentaire: null },
+  { eleveId: "1", matricule: "A1", nom: "Martin", prenom: "Camille", valeur: null, absent: false, commentaire: null, version: null },
+  { eleveId: "2", matricule: "A2", nom: "Durand", prenom: "Léa", valeur: null, absent: false, commentaire: null, version: null },
 ];
 
 function grille(peutModifier = true): GrilleNotes {
@@ -116,7 +116,7 @@ describe("grille de saisie", () => {
     expect(onNavigate).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Enregistrer" }));
     expect(onEnregistrer).toHaveBeenCalledWith([
-      { eleveId: "1", valeur: 15, absent: false, commentaire: null, supprimer: false },
+      { eleveId: "1", valeur: 15, absent: false, commentaire: null, supprimer: false, version: null, noteId: null },
     ]);
   });
 

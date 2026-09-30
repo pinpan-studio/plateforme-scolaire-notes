@@ -155,6 +155,9 @@ describe("notes et autorisations", () => {
       body: { evaluationId: evaluation.id, eleveId, valeur: 10, estAbsent: false },
     });
     expect(doublon.status).toBe(409);
+    expect(((await jsonOf(doublon)).error as { code: string }).code).toBe("CONFLIT");
+    const inchangee = (await getDb().select().from(note).where(eq(note.id, String(noteZero.id))))[0];
+    expect(inchangee?.valeur).toBe(0);
 
     const modifie = await call(patchNote, `/api/notes/${noteZero.id}`, {
       method: "PATCH",
@@ -163,7 +166,8 @@ describe("notes et autorisations", () => {
       body: { valeur: 14, estAbsent: false, version: noteZero.version },
     });
     expect(modifie.status).toBe(200);
-    expect((await jsonOf(modifie)).valeur).toBe(14);
+    const noteModifiee = await jsonOf(modifie);
+    expect(noteModifiee.valeur).toBe(14);
     const conflit = await call(patchNote, `/api/notes/${noteZero.id}`, {
       method: "PATCH",
       cookie: ctx.nathan,
@@ -180,8 +184,8 @@ describe("notes et autorisations", () => {
       body: {
         evaluationId: evaluation.id,
         lignes: [
-          { eleveId: secours, valeur: 15, estAbsent: false },
-          { eleveId: ctx.eleves[2].id, valeur: 21, estAbsent: false },
+          { eleveId: secours, valeur: 15, estAbsent: false, version: null },
+          { eleveId: ctx.eleves[2].id, valeur: 21, estAbsent: false, version: null },
         ],
       },
     });
@@ -194,8 +198,8 @@ describe("notes et autorisations", () => {
       cookie: ctx.nathan,
       body: {
         lignes: [
-          { evaluationId: evaluation.id, eleveId: secours, valeur: 15, estAbsent: false },
-          { evaluationId: ctx.evalFr.id, eleveId: secours, valeur: 12, estAbsent: false },
+          { evaluationId: evaluation.id, eleveId: secours, valeur: 15, estAbsent: false, version: null },
+          { evaluationId: ctx.evalFr.id, eleveId: secours, valeur: 12, estAbsent: false, version: null },
         ],
       },
     });
@@ -209,8 +213,8 @@ describe("notes et autorisations", () => {
       body: {
         evaluationId: evaluation.id,
         lignes: [
-          { eleveId: secours, valeur: 15, estAbsent: false },
-          { eleveId: ctx.eleves[2].id, valeur: null, estAbsent: true },
+          { eleveId: secours, valeur: 15, estAbsent: false, version: null },
+          { eleveId: ctx.eleves[2].id, valeur: null, estAbsent: true, version: null },
         ],
       },
     });
@@ -225,8 +229,8 @@ describe("notes et autorisations", () => {
       body: {
         evaluationId: evaluation.id,
         lignes: [
-          { eleveId: secours, valeur: 15, estAbsent: false },
-          { eleveId: ctx.eleves[2].id, valeur: null, estAbsent: true },
+          { eleveId: secours, valeur: 15, estAbsent: false, version: null },
+          { eleveId: ctx.eleves[2].id, valeur: null, estAbsent: true, version: null },
         ],
       },
     });
@@ -234,7 +238,10 @@ describe("notes et autorisations", () => {
     const lotCamille = await call(postLot, "/api/notes/lot", {
       method: "POST",
       cookie: ctx.camille,
-      body: { evaluationId: evaluation.id, lignes: [{ eleveId: secours, valeur: 8, estAbsent: false }] },
+      body: {
+        evaluationId: evaluation.id,
+        lignes: [{ eleveId: secours, valeur: 8, estAbsent: false, version: null }],
+      },
     });
     expect(lotCamille.status).toBe(403);
     const valeurSecours = (
@@ -261,6 +268,7 @@ describe("notes et autorisations", () => {
       method: "DELETE",
       cookie: ctx.nathan,
       params: { id: String(noteZero.id) },
+      body: { version: noteModifiee.version },
     });
     expect(supprNote.status).toBe(204);
     const supprEval = await call(deleteEvaluation, `/api/evaluations/${evaluation.id}`, {
@@ -284,7 +292,7 @@ describe("notes et autorisations", () => {
         method: "PATCH",
         cookie: ctx.nathan,
         params: { id: ctx.notePc.id },
-        body: { valeur: 9, estAbsent: false },
+        body: { valeur: 9, estAbsent: false, version: ctx.notePc.version },
       });
       expect(ferme.status).toBe(403);
       const avantLibelle = await jsonOf(

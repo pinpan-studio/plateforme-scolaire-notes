@@ -290,6 +290,8 @@ export type LigneGrille = {
   absent: boolean;
   commentaire: string | null;
   noteId?: string | null;
+  /** `updated_at` de la note déjà enregistrée, ou null s'il n'y en a pas. */
+  version: string | null;
 };
 
 export type GrilleNotes = {
@@ -299,6 +301,14 @@ export type GrilleNotes = {
   lignes: LigneGrille[];
 };
 
+export type ConflitVersionNote = {
+  index: number | null;
+  noteId: string | null;
+  eleveId: string;
+  evaluationId: string;
+  version: string | null;
+};
+
 export type LigneNoteEnvoi = {
   eleveId: string;
   valeur: number | null;
@@ -306,6 +316,10 @@ export type LigneNoteEnvoi = {
   commentaire: string | null;
   /** Demande la suppression de la note enregistrée. Le schéma n'accepte pas une ligne ni absente ni chiffrée. */
   supprimer: boolean;
+  /** Version lue avec la grille. `null` si la note n'existait pas. */
+  version: string | null;
+  /** Note chargée avec la grille, ou null s'il n'y en avait pas. */
+  noteId: string | null;
 };
 
 export type EnregistrementNotes = {
