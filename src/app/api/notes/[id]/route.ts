@@ -15,6 +15,6 @@ export const PATCH = route(async (request, { params }) =>
 );
 
 export const DELETE = route(async (request, { params }) => {
-  await deleteNote(await requireSession(request), parseRouteId(params));
+  await deleteNote(await requireSession(request), parseRouteId(params), await readJson(request));
   return empty();
 });

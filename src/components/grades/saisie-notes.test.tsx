@@ -116,7 +116,7 @@ describe("grille de saisie", () => {
     expect(onNavigate).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Enregistrer" }));
     expect(onEnregistrer).toHaveBeenCalledWith([
-      { eleveId: "1", valeur: 15, absent: false, commentaire: null, supprimer: false, version: null },
+      { eleveId: "1", valeur: 15, absent: false, commentaire: null, supprimer: false, version: null, noteId: null },
     ]);
   });
 

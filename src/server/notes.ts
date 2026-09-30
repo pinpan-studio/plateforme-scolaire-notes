@@ -1,12 +1,12 @@
 import { and, asc, eq, inArray, or } from "drizzle-orm";
-import { eleve, evaluation, inscription, note } from "@/db/schema";
+import { affectationEnseignant, anneeScolaire, classe, eleve, evaluation, inscription, note } from "@/db/schema";
 import { canWriteGrades, type SessionUser } from "@/lib/auth/permissions";
 import { assertWriteRate } from "@/lib/auth/rate-limit";
 import { getDb, type Database } from "./db";
 import { writeAudit } from "./audit";
 import { ApiError, type ConflitVersion, conflitVersion, forbidden, notFound } from "./errors";
 import { optionalUuid, pagination, searchParams, versionCorrespond, versionOf } from "./query";
-import { createNoteSchema, lotNotesSchema, parseBody, patchNoteSchema } from "./schemas";
+import { createNoteSchema, deleteNoteSchema, lotNotesSchema, parseBody, patchNoteSchema } from "./schemas";
 import { canReadClassSubject, canWriteClassSubject, closedYearError, loadScope, refuse } from "./scope";
 import { loadEvaluationContext } from "./evaluations";
 
@@ -156,39 +156,47 @@ export async function createNote(session: SessionUser, body: unknown) {
   if (!canWriteGrades(session.role)) throw forbidden();
   assertWriteRate(session.id);
   const input = parseBody(createNoteSchema, body);
-  const context = await assertLine(input, session, "POST");
-  const db = getDb();
-  const [existing] = await db
-    .select({ id: note.id })
-    .from(note)
-    .where(and(eq(note.eleveId, input.eleveId), eq(note.evaluationId, input.evaluationId)))
-    .limit(1);
-  if (existing) throw new ApiError(409, "CONFLIT", "Cette note existe déjà.");
-  const [row] = await db
-    .insert(note)
-    .values({
-      eleveId: input.eleveId,
-      evaluationId: input.evaluationId,
-      valeur: input.estAbsent ? null : input.valeur,
-      estAbsent: input.estAbsent,
-      commentaire: input.commentaire ?? null,
-    })
-    .returning();
-  await writeAudit({
-    type: "NOTE_CREATION",
-    acteurId: session.id,
-    identifiant: session.email,
-    resultat: "201",
-    action: "POST",
-    cibleType: "note",
-    cibleId: row.id,
-    nouvelleValeur: formatValeur(row.valeur, row.estAbsent),
+  await assertLine(input, session, "POST");
+  const row = await transactionNotes(session, "POST", async (tx) => {
+    await verrouillerEvaluations(tx, [input.evaluationId]);
+    const [existing] = await tx
+      .select({ id: note.id })
+      .from(note)
+      .where(and(eq(note.eleveId, input.eleveId), eq(note.evaluationId, input.evaluationId)))
+      .limit(1)
+      .for("update");
+    const droits = await verrouillerDroits(tx, [input.evaluationId]);
+    const droit = droits.get(input.evaluationId);
+    if (!droit) throw notFound("Évaluation introuvable.");
+    exigerDroit(session, droit);
+    depassementBareme(input.estAbsent ? null : input.valeur, input.estAbsent, droit.noteMax);
+    if (existing) throw new ApiError(409, "CONFLIT", "Cette note existe déjà.");
+    const [created] = await tx
+      .insert(note)
+      .values({
+        eleveId: input.eleveId,
+        evaluationId: input.evaluationId,
+        valeur: input.estAbsent ? null : input.valeur,
+        estAbsent: input.estAbsent,
+        commentaire: input.commentaire ?? null,
+      })
+      .returning();
+    await writeAudit(
+      {
+        type: "NOTE_CREATION",
+        acteurId: session.id,
+        identifiant: session.email,
+        resultat: "201",
+        action: "POST",
+        cibleType: "note",
+        cibleId: created.id,
+        nouvelleValeur: formatValeur(created.valeur, created.estAbsent),
+      },
+      tx,
+    );
+    return publicNote(created, droit);
   });
-  return publicNote(row, {
-    classeId: context.evaluation.classeId,
-    matiereId: context.evaluation.matiereId,
-    noteMax: context.evaluation.noteMax,
-  });
+  return row;
 }
 
 function fusionner(current: typeof note.$inferSelect, input: NotePatch): NoteInput {
@@ -214,14 +222,73 @@ function fusionner(current: typeof note.$inferSelect, input: NotePatch): NoteInp
   };
 }
 
-function depassementBareme(valeur: number | null, estAbsent: boolean, noteMax: number) {
+function depassementBareme(valeur: number | null, estAbsent: boolean, noteMax: number, path = "valeur") {
   if (!estAbsent && valeur !== null && valeur > noteMax) {
     throw new ApiError(422, "VALIDATION", "La note dépasse le barème de l'évaluation.", [
-      { path: "valeur", message: "Supérieure à la note maximale." },
+      { path, message: "Supérieure à la note maximale." },
     ]);
   }
 }
 
+class RefusDansTransaction extends Error {
+  readonly motif: "annee" | "affectation";
+  readonly evaluationId: string;
+
+  constructor(motif: "annee" | "affectation", evaluationId: string) {
+    super(motif);
+    this.name = "RefusDansTransaction";
+    this.motif = motif;
+    this.evaluationId = evaluationId;
+  }
+}
+
+type DroitEvaluation = {
+  evaluationId: string;
+  classeId: string;
+  matiereId: string;
+  noteMax: number;
+  anneeScolaireId: string;
+  statut: string;
+  enseignantAffecteId: string | null;
+};
+
+async function signalerRefus(session: SessionUser, action: string, refus: RefusDansTransaction): Promise<never> {
+  if (refus.motif === "annee") throw closedYearError();
+  return refuse(
+    session,
+    action,
+    "evaluation",
+    refus.evaluationId,
+    "Vous n'êtes pas affecté à cette classe et cette matière.",
+  );
+}
+
+function exigerDroit(session: SessionUser, droit: DroitEvaluation) {
+  const closed = droit.statut === "CLOTUREE";
+  const affectations =
+    droit.enseignantAffecteId && session.enseignantId && droit.enseignantAffecteId === session.enseignantId
+      ? [{ classeId: droit.classeId, matiereId: droit.matiereId, anneeScolaireId: droit.anneeScolaireId }]
+      : [];
+  const scope = { ...session, classesPp: [] as string[], affectations };
+  if (canWriteClassSubject(scope, droit.classeId, droit.matiereId, closed)) return;
+  if (closed && session.role !== "ADMIN") throw new RefusDansTransaction("annee", droit.evaluationId);
+  throw new RefusDansTransaction("affectation", droit.evaluationId);
+}
+
+async function transactionNotes<T>(session: SessionUser, action: string, run: (tx: NoteTx) => Promise<T>): Promise<T> {
+  try {
+    return await getDb().transaction(run);
+  } catch (error) {
+    if (error instanceof RefusDansTransaction) return signalerRefus(session, action, error);
+    throw error;
+  }
+}
+
+/**
+ * Verrou exclusif des évaluations, toujours en premier, par id croissant.
+ * Les notes viennent ensuite. Les années et les affectations sont des verrous
+ * partagés, dans cet ordre, pour ne pas croiser un autre écrivain.
+ */
 async function verrouillerEvaluations(tx: NoteTx, evaluationIds: readonly string[]) {
   const ids = [...new Set(evaluationIds)].sort();
   if (ids.length === 0) return;
@@ -233,6 +300,75 @@ async function verrouillerEvaluations(tx: NoteTx, evaluationIds: readonly string
     .for("update");
 }
 
+/**
+ * Relit l'année et l'affectation sous FOR SHARE, après les verrous exclusifs.
+ * FOR SHARE (et non FOR KEY SHARE) entre en conflit avec l'UPDATE du statut,
+ * qui ne touche pas la clé et prend donc FOR NO KEY UPDATE.
+ * Ordre : années par id, puis affectations par id.
+ */
+async function verrouillerDroits(tx: NoteTx, evaluationIds: readonly string[]): Promise<Map<string, DroitEvaluation>> {
+  const ids = [...new Set(evaluationIds)].sort();
+  const metas = await tx
+    .select({
+      evaluationId: evaluation.id,
+      classeId: evaluation.classeId,
+      matiereId: evaluation.matiereId,
+      noteMax: evaluation.noteMax,
+      anneeScolaireId: classe.anneeScolaireId,
+    })
+    .from(evaluation)
+    .innerJoin(classe, eq(evaluation.classeId, classe.id))
+    .where(inArray(evaluation.id, ids));
+  if (metas.length !== ids.length) throw notFound("Évaluation introuvable.");
+
+  const anneeIds = [...new Set(metas.map((row) => row.anneeScolaireId))].sort();
+  const annees = await tx
+    .select({ id: anneeScolaire.id, statut: anneeScolaire.statut })
+    .from(anneeScolaire)
+    .where(inArray(anneeScolaire.id, anneeIds))
+    .orderBy(asc(anneeScolaire.id))
+    .for("share");
+  const statutParAnnee = new Map(annees.map((row) => [row.id, row.statut]));
+
+  const filtre = or(
+    ...metas.map((row) =>
+      and(
+        eq(affectationEnseignant.classeId, row.classeId),
+        eq(affectationEnseignant.matiereId, row.matiereId),
+        eq(affectationEnseignant.anneeScolaireId, row.anneeScolaireId),
+      ),
+    ),
+  );
+  const affectations = filtre
+    ? await tx
+        .select({
+          id: affectationEnseignant.id,
+          enseignantId: affectationEnseignant.enseignantId,
+          classeId: affectationEnseignant.classeId,
+          matiereId: affectationEnseignant.matiereId,
+          anneeScolaireId: affectationEnseignant.anneeScolaireId,
+        })
+        .from(affectationEnseignant)
+        .where(filtre)
+        .orderBy(asc(affectationEnseignant.id))
+        .for("share")
+    : [];
+  const enseignantParCle = new Map(
+    affectations.map((row) => [`${row.classeId}:${row.matiereId}:${row.anneeScolaireId}`, row.enseignantId]),
+  );
+
+  return new Map(
+    metas.map((row) => [
+      row.evaluationId,
+      {
+        ...row,
+        statut: statutParAnnee.get(row.anneeScolaireId) ?? "CLOTUREE",
+        enseignantAffecteId: enseignantParCle.get(`${row.classeId}:${row.matiereId}:${row.anneeScolaireId}`) ?? null,
+      },
+    ]),
+  );
+}
+
 export async function updateNote(session: SessionUser, id: string, body: unknown) {
   if (!canWriteGrades(session.role)) throw forbidden();
   assertWriteRate(session.id);
@@ -241,11 +377,15 @@ export async function updateNote(session: SessionUser, id: string, body: unknown
   const [current] = await db.select().from(note).where(eq(note.id, id)).limit(1);
   if (!current) throw notFound("Note introuvable.");
   const provisional = fusionner(current, input);
-  const context = await assertLine(provisional, session, "PATCH");
-  const row = await db.transaction(async (tx) => {
+  await assertLine(provisional, session, "PATCH");
+  return transactionNotes(session, "PATCH", async (tx) => {
     await verrouillerEvaluations(tx, [current.evaluationId]);
     const [locked] = await tx.select().from(note).where(eq(note.id, id)).limit(1).for("update");
     if (!locked) throw notFound("Note introuvable.");
+    const droits = await verrouillerDroits(tx, [locked.evaluationId]);
+    const droit = droits.get(locked.evaluationId);
+    if (!droit) throw notFound("Évaluation introuvable.");
+    exigerDroit(session, droit);
     if (!versionCorrespond(locked.updatedAt, input.version)) {
       throw conflitVersion([
         {
@@ -258,7 +398,7 @@ export async function updateNote(session: SessionUser, id: string, body: unknown
       ]);
     }
     const next = fusionner(locked, input);
-    depassementBareme(next.valeur, next.estAbsent, context.evaluation.noteMax);
+    depassementBareme(next.valeur, next.estAbsent, droit.noteMax);
     const [updated] = await tx
       .update(note)
       .set({
@@ -268,6 +408,7 @@ export async function updateNote(session: SessionUser, id: string, body: unknown
       })
       .where(eq(note.id, id))
       .returning();
+    if (!updated) throw notFound("Note introuvable.");
     await writeAudit(
       {
         type: "NOTE_MODIFICATION",
@@ -282,20 +423,15 @@ export async function updateNote(session: SessionUser, id: string, body: unknown
       },
       tx,
     );
-    return updated;
-  });
-  return publicNote(row, {
-    classeId: context.evaluation.classeId,
-    matiereId: context.evaluation.matiereId,
-    noteMax: context.evaluation.noteMax,
+    return publicNote(updated, droit);
   });
 }
 
-export async function deleteNote(session: SessionUser, id: string) {
+export async function deleteNote(session: SessionUser, id: string, body: unknown) {
   if (!canWriteGrades(session.role)) throw forbidden();
   assertWriteRate(session.id);
-  const db = getDb();
-  const [current] = await db.select().from(note).where(eq(note.id, id)).limit(1);
+  const input = parseBody(deleteNoteSchema, body);
+  const [current] = await getDb().select().from(note).where(eq(note.id, id)).limit(1);
   if (!current) throw notFound("Note introuvable.");
   await assertLine(
     {
@@ -307,16 +443,39 @@ export async function deleteNote(session: SessionUser, id: string) {
     session,
     "DELETE",
   );
-  await db.delete(note).where(eq(note.id, id));
-  await writeAudit({
-    type: "NOTE_SUPPRESSION",
-    acteurId: session.id,
-    identifiant: session.email,
-    resultat: "204",
-    action: "DELETE",
-    cibleType: "note",
-    cibleId: id,
-    ancienneValeur: formatValeur(current.valeur, current.estAbsent),
+  await transactionNotes(session, "DELETE", async (tx) => {
+    await verrouillerEvaluations(tx, [current.evaluationId]);
+    const [locked] = await tx.select().from(note).where(eq(note.id, id)).limit(1).for("update");
+    if (!locked) throw notFound("Note introuvable.");
+    const droits = await verrouillerDroits(tx, [locked.evaluationId]);
+    const droit = droits.get(locked.evaluationId);
+    if (!droit) throw notFound("Évaluation introuvable.");
+    exigerDroit(session, droit);
+    if (!versionCorrespond(locked.updatedAt, input.version)) {
+      throw conflitVersion([
+        {
+          index: null,
+          noteId: locked.id,
+          eleveId: locked.eleveId,
+          evaluationId: locked.evaluationId,
+          version: versionOf(locked.updatedAt),
+        },
+      ]);
+    }
+    await tx.delete(note).where(eq(note.id, id));
+    await writeAudit(
+      {
+        type: "NOTE_SUPPRESSION",
+        acteurId: session.id,
+        identifiant: session.email,
+        resultat: "204",
+        action: "DELETE",
+        cibleType: "note",
+        cibleId: id,
+        ancienneValeur: formatValeur(locked.valeur, locked.estAbsent),
+      },
+      tx,
+    );
   });
 }
 
@@ -420,93 +579,109 @@ async function prepareLot(session: SessionUser, body: unknown, action: string): 
   return prepared;
 }
 
-async function persistLot(session: SessionUser, lignes: PreparedLine[], db: Database) {
-  return db.transaction(async (tx) => {
-    await verrouillerEvaluations(
-      tx,
-      lignes.map((ligne) => ligne.evaluationId),
-    );
-    const filtre = or(
-      ...lignes.map((ligne) => and(eq(note.eleveId, ligne.eleveId), eq(note.evaluationId, ligne.evaluationId))),
-    );
-    const existantes = filtre
-      ? await tx.select().from(note).where(filtre).orderBy(asc(note.id)).for("update")
-      : [];
-    const parCle = new Map(existantes.map((row) => [cleNote(row.evaluationId, row.eleveId), row]));
-    const conflits: ConflitVersion[] = [];
-    for (const ligne of lignes) {
-      const row = parCle.get(cleNote(ligne.evaluationId, ligne.eleveId));
-      const correspond =
-        ligne.version === null ? !row : row !== undefined && versionCorrespond(row.updatedAt, ligne.version);
-      if (!correspond) conflits.push(conflitLigne(ligne, row));
-    }
-    if (conflits.length > 0) throw conflitVersion(conflits);
+async function ecrireLot(tx: NoteTx, session: SessionUser, lignes: PreparedLine[]) {
+  await verrouillerEvaluations(
+    tx,
+    lignes.map((ligne) => ligne.evaluationId),
+  );
+  const filtre = or(
+    ...lignes.map((ligne) => and(eq(note.eleveId, ligne.eleveId), eq(note.evaluationId, ligne.evaluationId))),
+  );
+  const existantes = filtre
+    ? await tx.select().from(note).where(filtre).orderBy(asc(note.id)).for("update")
+    : [];
+  const droits = await verrouillerDroits(
+    tx,
+    lignes.map((ligne) => ligne.evaluationId),
+  );
+  for (const ligne of lignes) {
+    const droit = droits.get(ligne.evaluationId);
+    if (!droit) throw notFound("Évaluation introuvable.");
+    exigerDroit(session, droit);
+    depassementBareme(ligne.valeur, ligne.estAbsent, droit.noteMax, `lignes.${ligne.index}.valeur`);
+  }
+  const parCle = new Map(existantes.map((row) => [cleNote(row.evaluationId, row.eleveId), row]));
+  const conflits: ConflitVersion[] = [];
+  for (const ligne of lignes) {
+    const row = parCle.get(cleNote(ligne.evaluationId, ligne.eleveId));
+    const correspond =
+      ligne.version === null ? !row : row !== undefined && versionCorrespond(row.updatedAt, ligne.version);
+    if (!correspond) conflits.push(conflitLigne(ligne, row));
+  }
+  if (conflits.length > 0) throw conflitVersion(conflits);
+  return ecrireLignesLot(tx, session, lignes, parCle);
+}
 
-    const saved = [];
-    for (const ligne of lignes) {
-      const actuelle = parCle.get(cleNote(ligne.evaluationId, ligne.eleveId));
-      if (actuelle) {
-        const [row] = await tx
-          .update(note)
-          .set({
-            valeur: ligne.valeur,
-            estAbsent: ligne.estAbsent,
-            commentaire: ligne.commentaire ?? null,
-          })
-          .where(eq(note.id, actuelle.id))
-          .returning();
-        if (!row) throw conflitVersion([conflitLigne(ligne, actuelle)]);
-        await writeAudit(
-          {
-            type: "NOTE_MODIFICATION",
-            acteurId: session.id,
-            identifiant: session.email,
-            resultat: "200",
-            action: "LOT",
-            cibleType: "note",
-            cibleId: row.id,
-            ancienneValeur: formatValeur(actuelle.valeur, actuelle.estAbsent),
-            nouvelleValeur: formatValeur(row.valeur, row.estAbsent),
-          },
-          tx,
-        );
-        saved.push(publicNote(row, ligne));
-      } else {
-        const [row] = await tx
-          .insert(note)
-          .values({
-            eleveId: ligne.eleveId,
-            evaluationId: ligne.evaluationId,
-            valeur: ligne.valeur,
-            estAbsent: ligne.estAbsent,
-            commentaire: ligne.commentaire ?? null,
-          })
-          .returning();
-        await writeAudit(
-          {
-            type: "NOTE_CREATION",
-            acteurId: session.id,
-            identifiant: session.email,
-            resultat: "201",
-            action: "LOT",
-            cibleType: "note",
-            cibleId: row.id,
-            nouvelleValeur: formatValeur(row.valeur, row.estAbsent),
-          },
-          tx,
-        );
-        saved.push(publicNote(row, ligne));
-      }
+async function ecrireLignesLot(
+  tx: NoteTx,
+  session: SessionUser,
+  lignes: PreparedLine[],
+  parCle: Map<string, typeof note.$inferSelect>,
+) {
+  const saved = [];
+  for (const ligne of lignes) {
+    const actuelle = parCle.get(cleNote(ligne.evaluationId, ligne.eleveId));
+    if (actuelle) {
+      const [row] = await tx
+        .update(note)
+        .set({
+          valeur: ligne.valeur,
+          estAbsent: ligne.estAbsent,
+          commentaire: ligne.commentaire ?? null,
+        })
+        .where(eq(note.id, actuelle.id))
+        .returning();
+      if (!row) throw conflitVersion([conflitLigne(ligne, actuelle)]);
+      await writeAudit(
+        {
+          type: "NOTE_MODIFICATION",
+          acteurId: session.id,
+          identifiant: session.email,
+          resultat: "200",
+          action: "LOT",
+          cibleType: "note",
+          cibleId: row.id,
+          ancienneValeur: formatValeur(actuelle.valeur, actuelle.estAbsent),
+          nouvelleValeur: formatValeur(row.valeur, row.estAbsent),
+        },
+        tx,
+      );
+      saved.push(publicNote(row, ligne));
+    } else {
+      const [row] = await tx
+        .insert(note)
+        .values({
+          eleveId: ligne.eleveId,
+          evaluationId: ligne.evaluationId,
+          valeur: ligne.valeur,
+          estAbsent: ligne.estAbsent,
+          commentaire: ligne.commentaire ?? null,
+        })
+        .returning();
+      await writeAudit(
+        {
+          type: "NOTE_CREATION",
+          acteurId: session.id,
+          identifiant: session.email,
+          resultat: "201",
+          action: "LOT",
+          cibleType: "note",
+          cibleId: row.id,
+          nouvelleValeur: formatValeur(row.valeur, row.estAbsent),
+        },
+        tx,
+      );
+      saved.push(publicNote(row, ligne));
     }
-    return saved;
-  });
+  }
+  return saved;
 }
 
 export async function saveLot(session: SessionUser, body: unknown) {
   if (!canWriteGrades(session.role)) throw forbidden();
   assertWriteRate(session.id);
   const lignes = await prepareLot(session, body, "POST");
-  const saved = await persistLot(session, lignes, getDb());
+  const saved = await transactionNotes(session, "POST", (tx) => ecrireLot(tx, session, lignes));
   return { data: saved, total: saved.length };
 }
 

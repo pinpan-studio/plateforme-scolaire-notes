@@ -256,10 +256,23 @@ export const patchNoteSchema = z
   })
   .strict();
 
+/**
+ * Plafond d'un lot : la grille charge au plus 100 élèves (pagination).
+ * Au-delà, la requête est refusée avant tout verrou, pour ne pas bloquer
+ * les autres saisies de la même évaluation.
+ */
+export const LOT_NOTES_MAX = 100;
+
 export const lotNotesSchema = z
   .object({
     evaluationId: uuidSchema.optional(),
-    lignes: z.array(noteLigneSchema).min(1, "Au moins une ligne.").max(200, "Lot trop volumineux."),
+    lignes: z.array(noteLigneSchema).min(1, "Au moins une ligne.").max(LOT_NOTES_MAX, "Lot trop volumineux."),
+  })
+  .strict();
+
+export const deleteNoteSchema = z
+  .object({
+    version: versionHorodatageSchema,
   })
   .strict();
 

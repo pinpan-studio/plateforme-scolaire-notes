@@ -318,6 +318,8 @@ export type LigneNoteEnvoi = {
   supprimer: boolean;
   /** Version lue avec la grille. `null` si la note n'existait pas. */
   version: string | null;
+  /** Note chargée avec la grille, ou null s'il n'y en avait pas. */
+  noteId: string | null;
 };
 
 export type EnregistrementNotes = {

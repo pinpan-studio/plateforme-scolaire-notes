@@ -182,6 +182,7 @@ export function SaisieNotes({
           commentaire: videOuNull(brouillon.commentaire),
           supprimer: false,
           version: ligne.version,
+          noteId: ligne.noteId ?? null,
         });
         continue;
       }
@@ -194,6 +195,7 @@ export function SaisieNotes({
           commentaire: null,
           supprimer: true,
           version: ligne.version,
+          noteId: ligne.noteId ?? null,
         });
         continue;
       }
@@ -204,6 +206,7 @@ export function SaisieNotes({
         commentaire: videOuNull(brouillon.commentaire),
         supprimer: false,
         version: ligne.version,
+        noteId: ligne.noteId ?? null,
       });
     }
     return envois;

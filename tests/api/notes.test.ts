@@ -155,6 +155,9 @@ describe("notes et autorisations", () => {
       body: { evaluationId: evaluation.id, eleveId, valeur: 10, estAbsent: false },
     });
     expect(doublon.status).toBe(409);
+    expect(((await jsonOf(doublon)).error as { code: string }).code).toBe("CONFLIT");
+    const inchangee = (await getDb().select().from(note).where(eq(note.id, String(noteZero.id))))[0];
+    expect(inchangee?.valeur).toBe(0);
 
     const modifie = await call(patchNote, `/api/notes/${noteZero.id}`, {
       method: "PATCH",
@@ -163,7 +166,8 @@ describe("notes et autorisations", () => {
       body: { valeur: 14, estAbsent: false, version: noteZero.version },
     });
     expect(modifie.status).toBe(200);
-    expect((await jsonOf(modifie)).valeur).toBe(14);
+    const noteModifiee = await jsonOf(modifie);
+    expect(noteModifiee.valeur).toBe(14);
     const conflit = await call(patchNote, `/api/notes/${noteZero.id}`, {
       method: "PATCH",
       cookie: ctx.nathan,
@@ -264,6 +268,7 @@ describe("notes et autorisations", () => {
       method: "DELETE",
       cookie: ctx.nathan,
       params: { id: String(noteZero.id) },
+      body: { version: noteModifiee.version },
     });
     expect(supprNote.status).toBe(204);
     const supprEval = await call(deleteEvaluation, `/api/evaluations/${evaluation.id}`, {

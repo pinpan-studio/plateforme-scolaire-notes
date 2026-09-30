@@ -7,7 +7,7 @@ export type ErrorDetail = {
 
 /** Ligne refusée par le contrôle de version. Aucune valeur de note n'y figure. */
 export type ConflitVersion = {
-  /** Index dans `lignes` pour un lot, `null` pour un PATCH unitaire. */
+  /** Index dans `lignes` pour un lot, `null` pour un PATCH ou un DELETE unitaire. */
   index: number | null;
   noteId: string | null;
   eleveId: string;

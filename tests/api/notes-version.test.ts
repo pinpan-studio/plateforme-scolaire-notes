@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { note } from "@/db/schema";
+import { anneeScolaire, classe, evaluation, note } from "@/db/schema";
 import { createDb } from "@/db/client";
 import { getDb } from "@/server/db";
+import { LOT_NOTES_MAX } from "@/server/schemas";
 import { POST as postEvaluations } from "@/app/api/evaluations/route";
 import { DELETE as deleteEvaluation } from "@/app/api/evaluations/[id]/route";
 import { GET as getNotes } from "@/app/api/notes/route";
-import { PATCH as patchNote } from "@/app/api/notes/[id]/route";
+import { DELETE as deleteNote, PATCH as patchNote } from "@/app/api/notes/[id]/route";
 import { POST as postLot } from "@/app/api/notes/lot/route";
 import { call, jsonOf, login } from "./helpers";
 
@@ -456,6 +457,222 @@ describe("version obligatoire des notes", () => {
       expect(JSON.stringify(corpsAnonyme)).not.toMatch(/"valeur"/);
       expect(await valeurs(ctx.evaluationId)).toHaveLength(0);
     } finally {
+      await getDb().delete(note).where(eq(note.evaluationId, ctx.evaluationId));
+      await call(deleteEvaluation, `/api/evaluations/${ctx.evaluationId}`, {
+        method: "DELETE",
+        cookie: ctx.nathan,
+        params: { id: ctx.evaluationId },
+      });
+    }
+  });
+
+  it("exige la version au DELETE et répond 409 sans supprimer si elle est périmée", async () => {
+    const ctx = await contexte();
+    try {
+      const creation = await call(postLot, "/api/notes/lot", {
+        method: "POST",
+        cookie: ctx.nathan,
+        body: {
+          evaluationId: ctx.evaluationId,
+          lignes: [ligne(ctx.eleves[5].id, 9, false, null)],
+        },
+      });
+      expect(creation.status).toBe(201);
+      const creee = ((await jsonOf(creation)).data as NotePublique[])[0];
+
+      const sansVersion = await call(deleteNote, `/api/notes/${creee.id}`, {
+        method: "DELETE",
+        cookie: ctx.nathan,
+        params: { id: creee.id },
+      });
+      expect(sansVersion.status).toBe(422);
+      const detail = (await jsonOf(sansVersion)) as unknown as ErreurApi;
+      expect(detail.error.code).toBe("VALIDATION");
+      expect(detail.error.details?.some((item) => item.path === "version")).toBe(true);
+      expect(JSON.stringify(detail)).not.toMatch(/"valeur"/);
+
+      const modifiee = await call(patchNote, `/api/notes/${creee.id}`, {
+        method: "PATCH",
+        cookie: ctx.nathan,
+        params: { id: creee.id },
+        body: { valeur: 11, estAbsent: false, version: creee.version },
+      });
+      expect(modifiee.status).toBe(200);
+      const actuelle = (await jsonOf(modifiee)) as unknown as NotePublique;
+
+      const perime = await call(deleteNote, `/api/notes/${creee.id}`, {
+        method: "DELETE",
+        cookie: ctx.nathan,
+        params: { id: creee.id },
+        body: { version: creee.version },
+      });
+      expect(perime.status).toBe(409);
+      const conflit = (await jsonOf(perime)) as unknown as ErreurApi;
+      expect(conflit.error.code).toBe("CONFLIT_VERSION");
+      expect(conflit.error.message).toBe("Une ou plusieurs notes ont été modifiées. Rechargez avant d'enregistrer.");
+      expect(conflit.error.conflits).toEqual([
+        {
+          index: null,
+          noteId: creee.id,
+          eleveId: creee.eleveId,
+          evaluationId: ctx.evaluationId,
+          version: actuelle.version,
+        },
+      ]);
+      expect(JSON.stringify(conflit)).not.toMatch(/"valeur"/);
+      const [restante] = await getDb().select().from(note).where(eq(note.id, creee.id));
+      expect(restante?.valeur).toBe(11);
+
+      const supprimee = await call(deleteNote, `/api/notes/${creee.id}`, {
+        method: "DELETE",
+        cookie: ctx.nathan,
+        params: { id: creee.id },
+        body: { version: actuelle.version },
+      });
+      expect(supprimee.status).toBe(204);
+      expect(await getDb().select().from(note).where(eq(note.id, creee.id))).toHaveLength(0);
+    } finally {
+      await getDb().delete(note).where(eq(note.evaluationId, ctx.evaluationId));
+      await call(deleteEvaluation, `/api/evaluations/${ctx.evaluationId}`, {
+        method: "DELETE",
+        cookie: ctx.nathan,
+        params: { id: ctx.evaluationId },
+      });
+    }
+  });
+
+  it("refuse un lot plus grand que la page de la grille avant tout verrou", async () => {
+    const ctx = await contexte();
+    try {
+      const trop = await call(postLot, "/api/notes/lot", {
+        method: "POST",
+        cookie: ctx.nathan,
+        body: {
+          evaluationId: ctx.evaluationId,
+          lignes: Array.from({ length: LOT_NOTES_MAX + 1 }, () => ligne(ctx.eleves[0].id, 10, false, null)),
+        },
+      });
+      expect(trop.status).toBe(422);
+      const erreur = (await jsonOf(trop)) as unknown as ErreurApi;
+      expect(erreur.error.code).toBe("VALIDATION");
+      expect(erreur.error.details?.some((item) => item.path === "lignes" && item.message === "Lot trop volumineux.")).toBe(
+        true,
+      );
+      expect(JSON.stringify(erreur)).not.toMatch(/"valeur"/);
+      expect(await valeurs(ctx.evaluationId)).toHaveLength(0);
+    } finally {
+      await getDb().delete(note).where(eq(note.evaluationId, ctx.evaluationId));
+      await call(deleteEvaluation, `/api/evaluations/${ctx.evaluationId}`, {
+        method: "DELETE",
+        cookie: ctx.nathan,
+        params: { id: ctx.evaluationId },
+      });
+    }
+  });
+
+  it("refuse une clôture engagée pendant que l'écriture attend le verrou de l'année", async () => {
+    const ctx = await contexte();
+    const verrou = createDb();
+    const sonde = createDb();
+    let anneeId: string | undefined;
+    let relacher = () => {};
+    let enAttente: Promise<Response> | undefined;
+    let cloture: Promise<unknown> | undefined;
+    try {
+      const creation = await call(postLot, "/api/notes/lot", {
+        method: "POST",
+        cookie: ctx.nathan,
+        body: {
+          evaluationId: ctx.evaluationId,
+          lignes: [ligne(ctx.eleves[6].id, 8, false, null)],
+        },
+      });
+      expect(creation.status).toBe(201);
+      const creee = ((await jsonOf(creation)).data as NotePublique[])[0];
+      const [annee] = await getDb()
+        .select({ id: anneeScolaire.id, statut: anneeScolaire.statut })
+        .from(evaluation)
+        .innerJoin(classe, eq(evaluation.classeId, classe.id))
+        .innerJoin(anneeScolaire, eq(classe.anneeScolaireId, anneeScolaire.id))
+        .where(eq(evaluation.id, ctx.evaluationId))
+        .limit(1);
+      if (!annee || annee.statut !== "EN_COURS") throw new Error("L'année de l'évaluation n'est pas en cours.");
+      anneeId = annee.id;
+      const anneeVerrouillee = annee.id;
+
+      let ouverte = true;
+      const porte = new Promise<void>((resolve) => {
+        relacher = () => {
+          if (!ouverte) return;
+          ouverte = false;
+          resolve();
+        };
+      });
+      let signalerVerrou!: () => void;
+      const verrouPose = new Promise<void>((resolve) => {
+        signalerVerrou = resolve;
+      });
+      cloture = verrou.client.begin(async (tx) => {
+        await tx`SELECT id FROM annee_scolaire WHERE id = ${anneeVerrouillee}::uuid FOR UPDATE`;
+        signalerVerrou();
+        await porte;
+        await tx`UPDATE annee_scolaire SET statut = 'CLOTUREE' WHERE id = ${anneeVerrouillee}::uuid`;
+      });
+      await verrouPose;
+
+      enAttente = call(patchNote, `/api/notes/${creee.id}`, {
+        method: "PATCH",
+        cookie: ctx.nathan,
+        params: { id: creee.id },
+        body: { valeur: 13, estAbsent: false, version: creee.version },
+      });
+
+      const debut = Date.now();
+      let bloque = false;
+      while (Date.now() - debut < 8000) {
+        const rows = await sonde.client`
+          SELECT attente.pid
+          FROM pg_locks attente
+          WHERE NOT attente.granted
+            AND (
+              attente.relation = 'annee_scolaire'::regclass
+              OR attente.locktype = 'transactionid'
+            )
+            AND EXISTS (
+              SELECT 1
+              FROM pg_locks detenu
+              WHERE detenu.granted
+                AND detenu.relation = 'annee_scolaire'::regclass
+                AND detenu.pid <> attente.pid
+            )
+        `;
+        if (rows.length > 0) {
+          bloque = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      expect(bloque).toBe(true);
+
+      relacher();
+      const [response] = await Promise.all([enAttente, cloture]);
+      enAttente = undefined;
+      cloture = undefined;
+      expect(response.status).toBe(403);
+      const erreur = (await jsonOf(response)) as unknown as ErreurApi;
+      expect(erreur.error.code).toBe("ANNEE_CLOTUREE");
+      expect(erreur.error.conflits).toBeUndefined();
+      expect(JSON.stringify(erreur)).not.toMatch(/"valeur"/);
+      const [enBase] = await getDb().select().from(note).where(eq(note.id, creee.id));
+      expect(enBase?.valeur).toBe(8);
+    } finally {
+      relacher();
+      await Promise.allSettled([enAttente, cloture].filter((job): job is Promise<unknown> => job !== undefined));
+      if (anneeId) {
+        await getDb().update(anneeScolaire).set({ statut: "EN_COURS" }).where(eq(anneeScolaire.id, anneeId));
+      }
+      await verrou.client.end({ timeout: 5 });
+      await sonde.client.end({ timeout: 5 });
       await getDb().delete(note).where(eq(note.evaluationId, ctx.evaluationId));
       await call(deleteEvaluation, `/api/evaluations/${ctx.evaluationId}`, {
         method: "DELETE",
