@@ -180,8 +180,8 @@ describe("notes et autorisations", () => {
       body: {
         evaluationId: evaluation.id,
         lignes: [
-          { eleveId: secours, valeur: 15, estAbsent: false },
-          { eleveId: ctx.eleves[2].id, valeur: 21, estAbsent: false },
+          { eleveId: secours, valeur: 15, estAbsent: false, version: null },
+          { eleveId: ctx.eleves[2].id, valeur: 21, estAbsent: false, version: null },
         ],
       },
     });
@@ -194,8 +194,8 @@ describe("notes et autorisations", () => {
       cookie: ctx.nathan,
       body: {
         lignes: [
-          { evaluationId: evaluation.id, eleveId: secours, valeur: 15, estAbsent: false },
-          { evaluationId: ctx.evalFr.id, eleveId: secours, valeur: 12, estAbsent: false },
+          { evaluationId: evaluation.id, eleveId: secours, valeur: 15, estAbsent: false, version: null },
+          { evaluationId: ctx.evalFr.id, eleveId: secours, valeur: 12, estAbsent: false, version: null },
         ],
       },
     });
@@ -209,8 +209,8 @@ describe("notes et autorisations", () => {
       body: {
         evaluationId: evaluation.id,
         lignes: [
-          { eleveId: secours, valeur: 15, estAbsent: false },
-          { eleveId: ctx.eleves[2].id, valeur: null, estAbsent: true },
+          { eleveId: secours, valeur: 15, estAbsent: false, version: null },
+          { eleveId: ctx.eleves[2].id, valeur: null, estAbsent: true, version: null },
         ],
       },
     });
@@ -225,8 +225,8 @@ describe("notes et autorisations", () => {
       body: {
         evaluationId: evaluation.id,
         lignes: [
-          { eleveId: secours, valeur: 15, estAbsent: false },
-          { eleveId: ctx.eleves[2].id, valeur: null, estAbsent: true },
+          { eleveId: secours, valeur: 15, estAbsent: false, version: null },
+          { eleveId: ctx.eleves[2].id, valeur: null, estAbsent: true, version: null },
         ],
       },
     });
@@ -234,7 +234,10 @@ describe("notes et autorisations", () => {
     const lotCamille = await call(postLot, "/api/notes/lot", {
       method: "POST",
       cookie: ctx.camille,
-      body: { evaluationId: evaluation.id, lignes: [{ eleveId: secours, valeur: 8, estAbsent: false }] },
+      body: {
+        evaluationId: evaluation.id,
+        lignes: [{ eleveId: secours, valeur: 8, estAbsent: false, version: null }],
+      },
     });
     expect(lotCamille.status).toBe(403);
     const valeurSecours = (
@@ -284,7 +287,7 @@ describe("notes et autorisations", () => {
         method: "PATCH",
         cookie: ctx.nathan,
         params: { id: ctx.notePc.id },
-        body: { valeur: 9, estAbsent: false },
+        body: { valeur: 9, estAbsent: false, version: ctx.notePc.version },
       });
       expect(ferme.status).toBe(403);
       const avantLibelle = await jsonOf(

@@ -552,7 +552,7 @@ Contrôle de non-contournement : DB-NOT-03 et DB-NOT-04 restent rouges si l'API 
 | FE-SAI-05 | P1 | Valeur `0` | Acceptée et distinguée visuellement d'une cellule vide. |
 | FE-SAI-06 | P1 | Navigation clavier : flèche bas | Le focus passe à l'élève suivant sans soumettre la page. |
 | FE-SAI-07 | P1 | `ens.fr` ouvre la grille de maths | Accès refusé. Grille non affichée, aucune valeur préremplie dans le code HTML. |
-| FE-SAI-08 | P1 | Deux enseignants n'ouvrent pas la même grille. Un enseignant enregistre `15`, recharge. | Dernière valeur lue = 15. Un second onglet encore ouvert sur l'ancienne valeur, s'il enregistre `12` sans relecture, reçoit `409` (conflit de version) ou écrase selon la règle d'architecture. Référence de ce plan : **contrôle de version**, `409`, valeur en base toujours `15` tant que le client n'a pas rechargé. |
+| FE-SAI-08 | P1 | Deux enseignants n'ouvrent pas la même grille. Un enseignant enregistre `15`, recharge. | Dernière valeur lue = 15. Un second onglet encore ouvert sur l'ancienne valeur, s'il enregistre `12` sans relecture, reçoit `409` `CONFLIT_VERSION`. La valeur en base reste `15` tant que le client n'a pas rechargé. |
 | FE-SAI-09 | P2 | Colonne « note / max » | Affiche `/ 20` ou le `noteMax` de l'évaluation. |
 | FE-SAI-10 | P1 | Élève transféré hors de la classe après ouverture de la grille, puis enregistrement | La ligne de cet élève est refusée (`422`). Les autres notes du lot suivent FE-SAI-03 (rejet du lot). |
 

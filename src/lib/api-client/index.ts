@@ -589,6 +589,7 @@ export const api = {
             valeur: ligne.absent ? null : ligne.valeur,
             estAbsent: ligne.absent,
             commentaire: ligne.commentaire,
+            version: ligne.version,
           })),
         }),
       });
@@ -735,6 +736,7 @@ async function chargerGrille(evaluationId: string): Promise<GrilleNotes> {
       absent: note ? bool(note.estAbsent) : false,
       commentaire: note ? strOrNull(note.commentaire) : null,
       noteId: note ? strOrNull(note.id) : null,
+      version: note ? strOrNull(note.version) : null,
     };
   });
   return {

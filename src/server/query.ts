@@ -76,6 +76,11 @@ export function sortOrder(params: URLSearchParams, allowed: readonly string[], f
   return { sort, order: order as "asc" | "desc" };
 }
 
+export function versionCorrespond(updatedAt: Date, version: string): boolean {
+  const parsed = Date.parse(version);
+  return !Number.isNaN(parsed) && parsed === updatedAt.getTime();
+}
+
 export function assertVersion(updatedAt: Date, version: string | undefined) {
   if (version === undefined) return;
   const parsed = Date.parse(version);
@@ -84,7 +89,7 @@ export function assertVersion(updatedAt: Date, version: string | undefined) {
       { path: "version", message: "Horodatage invalide." },
     ]);
   }
-  if (parsed !== updatedAt.getTime()) {
+  if (!versionCorrespond(updatedAt, version)) {
     throw new ApiError(409, "CONFLIT", "La fiche a été modifiée. Rechargez avant d'enregistrer.");
   }
 }

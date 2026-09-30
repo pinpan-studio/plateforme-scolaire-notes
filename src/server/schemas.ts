@@ -205,6 +205,11 @@ const noteValeur = z
   .min(0, "La note ne peut pas être négative.")
   .refine((value) => decimales(value, 2), "Au plus 2 décimales.");
 
+/** Horodatage ISO renvoyé par l'API (`updated_at`). Absent du JSON : « Version requise. » */
+export const versionHorodatageSchema = z
+  .string({ error: "Version requise." })
+  .refine((value) => value.trim().length > 0 && !Number.isNaN(Date.parse(value)), "Horodatage invalide.");
+
 export const noteLigneSchema = z
   .object({
     evaluationId: uuidSchema.optional(),
@@ -212,6 +217,7 @@ export const noteLigneSchema = z
     valeur: noteValeur.nullable(),
     estAbsent: z.boolean({ error: "Présence ou absence requise." }),
     commentaire: z.string().trim().max(500, "Commentaire trop long.").nullable().optional(),
+    version: versionHorodatageSchema.nullable(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -246,7 +252,7 @@ export const patchNoteSchema = z
     valeur: noteValeur.nullable().optional(),
     estAbsent: z.boolean().optional(),
     commentaire: z.string().trim().max(500, "Commentaire trop long.").nullable().optional(),
-    version: z.string().optional(),
+    version: versionHorodatageSchema,
   })
   .strict();
 

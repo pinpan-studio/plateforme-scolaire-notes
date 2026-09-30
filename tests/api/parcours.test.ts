@@ -358,6 +358,7 @@ describe("parcours métier E2E-01 à E2E-11", () => {
       eleveId: eleves[index].id,
       valeur,
       estAbsent,
+      version: null,
     });
     const horsBarreme = await call(postLot, "/api/notes/lot", {
       method: "POST",

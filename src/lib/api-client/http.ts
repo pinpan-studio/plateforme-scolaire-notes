@@ -1,4 +1,4 @@
-import type { ApiErrorBody, ListeParams } from "@/lib/api-client/types";
+import type { ApiErrorBody, ConflitVersionNote, ListeParams } from "@/lib/api-client/types";
 
 const MESSAGES: Record<string, string> = {
   IDENTIFIANTS_INVALIDES: "E-mail ou mot de passe incorrect.",
@@ -17,6 +17,7 @@ const MESSAGES: Record<string, string> = {
   ANNEE_CLOTUREE: "Année clôturée. Les notes ne sont plus modifiables.",
   NON_AUTHENTIFIE: "Votre session a expiré. Reconnectez-vous.",
   CONFLIT: "Cet enregistrement existe déjà.",
+  CONFLIT_VERSION: "Une ou plusieurs notes ont été modifiées. Rechargez avant d'enregistrer.",
   VALIDATION: "Données invalides.",
   RATE_LIMITED: "Trop de tentatives. Réessayez plus tard.",
 };
@@ -32,14 +33,42 @@ export class ApiError extends Error {
   status: number;
   code: string;
   champs: { champ: string; message: string }[];
+  conflits: ConflitVersionNote[];
 
-  constructor(status: number, code: string, message: string, champs: { champ: string; message: string }[] = []) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    champs: { champ: string; message: string }[] = [],
+    conflits: ConflitVersionNote[] = [],
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.champs = champs;
+    this.conflits = conflits;
   }
+}
+
+function conflitsVersion(value: unknown): ConflitVersionNote[] {
+  if (!Array.isArray(value)) return [];
+  const conflits: ConflitVersionNote[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const eleveId = typeof row.eleveId === "string" ? row.eleveId : "";
+    const evaluationId = typeof row.evaluationId === "string" ? row.evaluationId : "";
+    if (!eleveId || !evaluationId) continue;
+    conflits.push({
+      index: typeof row.index === "number" ? row.index : null,
+      noteId: typeof row.noteId === "string" ? row.noteId : null,
+      eleveId,
+      evaluationId,
+      version: typeof row.version === "string" ? row.version : null,
+    });
+  }
+  return conflits;
 }
 
 export function messageUtilisateur(error: unknown, repli = "Impossible de charger les données."): string {
@@ -101,9 +130,12 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   if (!response.ok) {
-    const enveloppe = (payload ?? {}) as { error?: Partial<ApiErrorBody> & { details?: { path?: string; message?: string }[] } };
+    const enveloppe = (payload ?? {}) as {
+      error?: Partial<ApiErrorBody> & { details?: { path?: string; message?: string }[]; conflits?: unknown };
+    };
     const corps = (enveloppe.error ?? (payload as Partial<ApiErrorBody>) ?? {}) as Partial<ApiErrorBody> & {
       details?: { path?: string; message?: string }[];
+      conflits?: unknown;
     };
     const codeBrut = typeof corps.code === "string" ? corps.code : "ERREUR";
     const messageBrut = typeof corps.message === "string" ? corps.message : "";
@@ -119,7 +151,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
       .filter((champ) => champ.champ.length > 0);
     const message =
       messageBrut.trim() || (MESSAGES[code] ?? MESSAGES[codeBrut] ?? "Impossible de charger les données.");
-    throw new ApiError(response.status, code, message, champs);
+    throw new ApiError(response.status, code, message, champs, conflitsVersion(corps.conflits));
   }
 
   return payload as T;
