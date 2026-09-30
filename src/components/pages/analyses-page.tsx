@@ -12,6 +12,52 @@ import { FiltreSelect } from "@/components/ui/filtre-select";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 
+const MESSAGE_VIDE = "Aucune donnée disponible.";
+
+type PointGraphique = { libelle: string; valeur: number | null; effectif: number };
+
+function BlocBarres({
+  id,
+  titre,
+  loading,
+  error,
+  onRetry,
+  hasData,
+  points,
+  libelleValeur,
+  colonne,
+  sens = "vertical",
+}: {
+  id: string;
+  titre: string;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  hasData: boolean;
+  points: PointGraphique[];
+  libelleValeur: string;
+  colonne: string;
+  sens?: "vertical" | "horizontal";
+}) {
+  const vide = points.every((point) => point.valeur === null);
+  return (
+    <section aria-labelledby={id} aria-busy={loading && !hasData}>
+      <h2 id={id} className="text-lg font-semibold">{titre}</h2>
+      {loading && !hasData ? <p className="sr-only">Chargement des données.</p> : null}
+      <QueryGate loading={loading} error={error} onRetry={onRetry} hasData={hasData}>
+        {vide ? (
+          <p className="text-sm text-muted">{MESSAGE_VIDE}</p>
+        ) : (
+          <>
+            <GraphiqueBarres points={points} libelleValeur={libelleValeur} legende={titre} sens={sens} />
+            <TableauDonnees points={points} colonne={colonne} />
+          </>
+        )}
+      </QueryGate>
+    </section>
+  );
+}
+
 export function AnalysesPage() {
   const { anneeId } = useSession();
   const [classeId, setClasseId] = useState("");
@@ -56,20 +102,29 @@ export function AnalysesPage() {
           Réinitialiser les filtres
         </button>
       ) : null}
-      <section>
-        <h2 className="text-lg font-semibold">Distribution des moyennes générales</h2>
-        <QueryGate loading={distribution.loading} error={distribution.error} onRetry={distribution.retry} hasData={distribution.data !== null}>
-          <GraphiqueBarres points={barresDistribution} libelleValeur="Effectif" />
-          <TableauDonnees points={barresDistribution} colonne="Effectif" />
-        </QueryGate>
-      </section>
-      <section>
-        <h2 className="text-lg font-semibold">Moyenne par matière</h2>
-        <QueryGate loading={moyennes.loading} error={moyennes.error} onRetry={moyennes.retry} hasData={moyennes.data !== null}>
-          <GraphiqueBarres points={barresMatieres} libelleValeur="Moyenne" />
-          <TableauDonnees points={barresMatieres} colonne="Moyenne" />
-        </QueryGate>
-      </section>
+      <BlocBarres
+        id="titre-distribution"
+        titre="Distribution des moyennes générales"
+        loading={distribution.loading}
+        error={distribution.error}
+        onRetry={distribution.retry}
+        hasData={distribution.data !== null}
+        points={barresDistribution}
+        libelleValeur="Effectif"
+        colonne="Effectif"
+      />
+      <BlocBarres
+        id="titre-matieres"
+        titre="Moyenne par matière"
+        loading={moyennes.loading}
+        error={moyennes.error}
+        onRetry={moyennes.retry}
+        hasData={moyennes.data !== null}
+        points={barresMatieres}
+        libelleValeur="Moyenne"
+        colonne="Moyenne"
+        sens="horizontal"
+      />
       <section>
         <h2 className="text-lg font-semibold">Évolution</h2>
         <QueryGate loading={evolution.loading} error={evolution.error} onRetry={evolution.retry} hasData={evolution.data !== null}>

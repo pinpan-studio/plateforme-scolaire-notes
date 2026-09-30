@@ -1,3 +1,4 @@
+import { agregerMoyennesMatieres, moyenneDepuisAnalyseMatiere, moyennesElevesDepuisClasse } from "@/lib/api-client/analyses";
 import { ApiError, apiFetch, listeQuery } from "@/lib/api-client/http";
 import type {
   Affectation,
@@ -825,30 +826,39 @@ async function chargerDistribution(params: ListeParams): Promise<Distribution> {
 }
 
 async function chargerMoyennesMatieres(params: ListeParams): Promise<MoyennesMatieres> {
-  if (!params.classeId) return { matieres: [] };
-  const matieres = params.matiereId
-    ? [{ id: params.matiereId, nom: "" }]
-    : (await api.matieres({ page: 1, pageSize: 100 })).items;
-  const lignes = [];
-  for (const matiere of matieres) {
-    const detail = await ignorerInterdit(
-      apiFetch<unknown>(
-        listeQuery("/api/analyses/matiere", versApi({ ...params, matiereId: matiere.id })),
-      ),
-      null,
-    );
-    if (!detail) continue;
-    const corps = rec(detail);
-    const sujet = rec(corps.matiere);
-    const stats = rec(corps.statistiques);
-    lignes.push({
-      matiereId: str(sujet.matiereId, matiere.id),
-      nom: str(sujet.nom, "nom" in matiere ? matiere.nom : ""),
-      moyenne: numOrNull(stats.moyenneClasse),
-      effectif: num(stats.calculables),
-    });
+  if (params.classeId) {
+    const matieres = params.matiereId
+      ? [{ id: params.matiereId, nom: "" }]
+      : (await api.matieres({ page: 1, pageSize: 100 })).items;
+    const lignes = [];
+    for (const matiere of matieres) {
+      const detail = await ignorerInterdit(
+        apiFetch<unknown>(
+          listeQuery("/api/analyses/matiere", versApi({ ...params, matiereId: matiere.id })),
+        ),
+        null,
+      );
+      if (!detail) continue;
+      const ligne = moyenneDepuisAnalyseMatiere(detail, { id: matiere.id, nom: "nom" in matiere ? matiere.nom : "" });
+      if (ligne) lignes.push(ligne);
+    }
+    return { matieres: lignes };
   }
-  return { matieres: lignes };
+
+  const classes = await api.classes({ anneeId: params.anneeId, page: 1, pageSize: 100 });
+  const details = await Promise.all(
+    classes.items.map((classe) =>
+      ignorerInterdit(
+        apiFetch<unknown>(listeQuery("/api/analyses/classe", versApi({ ...params, classeId: classe.id }))),
+        null,
+      ),
+    ),
+  );
+  const lignes = details.flatMap((detail) => {
+    if (!detail) return [];
+    return moyennesElevesDepuisClasse(detail).filter((ligne) => !params.matiereId || ligne.matiereId === params.matiereId);
+  });
+  return agregerMoyennesMatieres(lignes);
 }
 
 async function chargerEvolution(params: ListeParams): Promise<EvolutionAnalyses> {
