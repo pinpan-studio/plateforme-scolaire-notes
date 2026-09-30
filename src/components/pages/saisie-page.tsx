@@ -17,6 +17,9 @@ export function SaisiePage({ evaluationId }: { evaluationId: string }) {
             const reponse = await api.enregistrerNotes(evaluationId, lignes);
             grille.remplacer(reponse.grille);
           }}
+          onRecharger={async () => {
+            grille.remplacer(await api.grille(evaluationId));
+          }}
         />
       ) : null}
     </QueryGate>
