@@ -18,7 +18,7 @@ const MESSAGES: Record<string, string> = {
   NON_AUTHENTIFIE: "Votre session a expiré. Reconnectez-vous.",
   CONFLIT: "Cet enregistrement existe déjà.",
   VALIDATION: "Données invalides.",
-  RATE_LIMITED: "Trop de tentatives. Réessayez plus tard.",
+  TROP_DE_TENTATIVES: "Trop de tentatives. Réessayez plus tard.",
 };
 
 const ALIAS_CODE: Record<string, string> = {

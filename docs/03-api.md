@@ -17,7 +17,8 @@ Le mot de passe de démonstration `Demo-2026!` n'est pas un secret de production
 | POST | `/api/auth/login` | non | — |
 | POST | `/api/auth/logout` | oui | tous |
 | GET | `/api/auth/session` | oui | tous |
-| GET, POST | `/api/auth/*` | Auth.js | le fournisseur Credentials est monté pour Auth.js |
+
+La connexion, la déconnexion et la session passent uniquement par ces trois routes. Le rattrapage Auth.js `/api/auth/[...nextauth]` n'est pas monté : l'application ne l'utilise pas, et il authentifiait tous les clients sous l'adresse IP constante `authjs`. Le cookie conserve le nom `authjs.session-token` : le jeton est produit par `@auth/core/jwt`.
 
 Connexion :
 
@@ -27,7 +28,7 @@ Connexion :
 
 Réponse `200` : `{ "utilisateur": { "id", "email", "role", "enseignantId", "prenom", "nom" } }` et `Set-Cookie`. Le corps ne contient ni mot de passe, ni hachage, ni jeton.
 
-Échec : mot de passe faux et identifiant inconnu renvoient le même `401` `{ "error": { "code": "INVALID_CREDENTIALS", "message": "Identifiants invalides." } }`. Compte inactif avec le bon mot de passe : `403` `ACCOUNT_DISABLED`. Cinq échecs en 15 minutes pour le couple (adresse IP, e-mail) bloquent le sixième essai en `429`, en-tête `Retry-After`, y compris si le mot de passe devient correct. Un autre e-mail depuis la même IP n'est pas bloqué.
+Échec : mot de passe faux et identifiant inconnu renvoient le même `401` `{ "error": { "code": "INVALID_CREDENTIALS", "message": "Identifiants invalides." } }`. Compte inactif avec le bon mot de passe : `403` `ACCOUNT_DISABLED`. Les compteurs sont dans Postgres (`limite_tentative`), partagés entre les instances. Fenêtre glissante (défaut 15 minutes, `AUTH_RATE_LIMIT_WINDOW_SECONDS`) : les essais périmés ne comptent plus et les lignes expirées sont supprimées. Cinq échecs (`AUTH_RATE_LIMIT_EMAIL_MAX`) pour le couple (adresse IP, e-mail) bloquent le sixième essai en `429`, en-tête `Retry-After`, y compris si le mot de passe devient correct. Une connexion réussie remet à zéro les échecs de cet e-mail. Un autre e-mail depuis la même IP n'est pas bloqué par ce seul couple. Une même IP est aussi bornée tous e-mails confondus (`AUTH_RATE_LIMIT_IP_MAX`, défaut 30) pour limiter le bourrage d'identifiants sans verrouiller les comptes de démo entre eux. Une autre IP ne verrouille pas le compte.
 
 ## 2. Erreurs
 
@@ -52,8 +53,19 @@ Réponse `200` : `{ "utilisateur": { "id", "email", "role", "enseignantId", "pre
 | 404 | `NOT_FOUND` | Identifiant inconnu |
 | 409 | `CONFLIT` | Unicité, version périmée, suppression encore référencée |
 | 422 | `VALIDATION` | Zod, barème, inscription, règle de gestion |
-| 429 | `RATE_LIMITED` | Login, recherche ou écriture de notes |
+| 429 | `TROP_DE_TENTATIVES` | Connexion, changement de mot de passe, mot de passe temporaire, validation de notes, recherche ou écriture de notes |
 | 500 | `ERREUR_INTERNE` | Message générique, sans pile ni SQL |
+
+Le `429` est identique sur toutes ces routes. En-tête `Retry-After` : entier de secondes. Corps, sans `details` :
+
+```json
+{
+  "error": {
+    "code": "TROP_DE_TENTATIVES",
+    "message": "Trop de tentatives. Réessayez plus tard."
+  }
+}
+```
 
 Les objets JSON sont stricts : une propriété inconnue (`role` sur un élève) est un `422`. Les identifiants sont des UUID. Une recherche `q` de plus de 80 caractères est un `422`. Le tri (`sort`) est une liste blanche (`nom`, `prenom`, `matricule`).
 
@@ -166,6 +178,8 @@ Une seule année `EN_COURS`. Ouvrir une deuxième sans clôturer la précédente
 
 Le mot de passe initial fait au moins 12 caractères. Le changement exige `motDePasseActuel`. La réponse ne contient jamais `motDePasseHash`.
 
+`PATCH /api/profil/mot-de-passe` et `PATCH /api/utilisateurs/:id` lorsqu'il contient `motDePasse` partagent le limiteur de tentatives (compte de session et IP, défaut 5 essais / 15 minutes, `PASSWORD_RATE_LIMIT_*`). `POST /api/utilisateurs/:id/mot-de-passe-temporaire` a son propre plafond (`TEMP_PASSWORD_RATE_LIMIT_*`, défaut 30 émissions par administrateur, 60 par IP, fenêtre 900 secondes). Les clés sont distinctes : réinitialiser des comptes ne consomme pas les 5 essais de changement, et le plafond temporaire reste borné. Le dépassement est le `429` décrit plus haut. Le corps ne dit pas si le compte existe. Sous le seuil, les messages restent ceux d'avant : `403` « Le mot de passe actuel est requis. », `404` « Utilisateur introuvable. » pour un identifiant inconnu, `200` `{ "ok": true }` ou `{ "motDePasseTemporaire" }`. Une réussite de changement par l'utilisateur ou par `PATCH` remet le compteur du compte à zéro. Chaque émission de mot de passe temporaire compte, y compris une réussite, sans remise à zéro.
+
 ```json
 {
   "email": "lea.dubois@tilleuls.demo",
@@ -207,7 +221,7 @@ Le mot de passe initial fait au moins 12 caractères. Le changement exige `motDe
 | GET | `/api/notes?evaluationId&eleveId&classeId&matiereId` | lecture selon le périmètre |
 | POST | `/api/notes` | création. Doublon élève+évaluation : `409` |
 | POST | `/api/notes/lot` | création ou mise à jour, une transaction |
-| POST | `/api/notes/valider` | mêmes contrôles, aucune écriture de note |
+| POST | `/api/notes/valider` | mêmes contrôles, aucune écriture de note. Limite par utilisateur de session et par IP (`VALIDATION_RATE_LIMIT_*`, défaut 30 et 120 par minute) : le `429` décrit plus haut. L'audit `NOTE_VALIDATION` n'est écrit qu'au premier passage d'un état ; un appel identique ne rajoute pas de ligne. L'enregistrement depuis l'écran de saisie appelle cette route avant d'écrire, pour afficher le même message |
 | GET, PATCH, DELETE | `/api/notes/:id` | `version` optionnelle, `409` si elle ne correspond plus |
 
 ```json

@@ -35,6 +35,8 @@ export function ConnexionPage() {
         setErreur("Ce compte est désactivé. Contactez l'administration.");
       } else if (error instanceof ApiError && error.status === 401) {
         setErreur("E-mail ou mot de passe incorrect.");
+      } else if (error instanceof ApiError && error.status === 429) {
+        setErreur(error.message);
       } else if (error instanceof ApiError && error.message) {
         setErreur(error.message);
       } else {

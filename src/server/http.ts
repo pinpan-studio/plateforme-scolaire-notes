@@ -28,11 +28,45 @@ export function empty(status = 204, extra?: HeadersInit): Response {
   return withSecurityHeaders(new Response(null, { status, headers: extra }));
 }
 
+const IP_PATTERN = /^[0-9a-fA-F:.]+$/;
+
+function firstValidIp(header: string | null): string | null {
+  if (!header) return null;
+  for (const part of header.split(",")) {
+    const candidate = part.trim();
+    if (candidate.length > 0 && candidate.length <= 64 && IP_PATTERN.test(candidate)) {
+      return candidate.toLowerCase();
+    }
+  }
+  return null;
+}
+
+/**
+ * Adresse IP du client, pour l'audit et les limites de tentatives.
+ *
+ * Sur Vercel (`VERCEL` défini), seuls les en-têtes posés par la plateforme
+ * sont lus, dans cet ordre : `x-vercel-forwarded-for`, puis `x-real-ip`.
+ * Vercel les écrase. `x-forwarded-for` est ignoré : un client peut le
+ * préfixer, et un proxy de confiance Enterprise peut le relayer.
+ * La première adresse syntaxiquement valide de l'en-tête de confiance est
+ * retenue (Vercel place le client en tête).
+ *
+ * Hors Vercel (développement et tests, sans proxy de confiance), repli :
+ * première adresse valide de `x-forwarded-for`. Ce repli n'est pas une
+ * preuve d'identité ; les en-têtes `x-vercel-forwarded-for` et `x-real-ip`
+ * y sont ignorés pour qu'un client ne choisisse pas son seau. S'il n'y a
+ * aucune adresse valide, la clé est `inconnue` : ces requêtes partagent
+ * un même compteur.
+ */
 export function clientIp(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  const candidate = forwarded?.split(",")[0]?.trim() || request.headers.get("x-real-ip") || "inconnue";
-  if (!/^[0-9a-fA-F:.]+$/.test(candidate) || candidate.length > 64) return "inconnue";
-  return candidate;
+  if (process.env.VERCEL) {
+    return (
+      firstValidIp(request.headers.get("x-vercel-forwarded-for")) ??
+      firstValidIp(request.headers.get("x-real-ip")) ??
+      "inconnue"
+    );
+  }
+  return firstValidIp(request.headers.get("x-forwarded-for")) ?? "inconnue";
 }
 
 function allowedOrigins(request: Request): Set<string> {

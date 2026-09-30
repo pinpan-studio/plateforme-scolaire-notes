@@ -138,7 +138,7 @@ describe("authentification", () => {
   });
 
   it("limite les essais de connexion", async () => {
-    resetRateLimits();
+    await resetRateLimits();
     const email = "rate.limit@tilleuls.demo";
     for (let essai = 0; essai < 5; essai += 1) {
       const response = await call(loginRoute, "/api/auth/login", {

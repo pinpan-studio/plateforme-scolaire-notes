@@ -454,3 +454,28 @@ export const journalAudit = pgTable(
     ),
   ],
 );
+
+/**
+ * Compteurs de tentatives partagés entre les instances.
+ * `cle` et `sujet` sont des HMAC : ni l'e-mail ni le jeton n'y figurent en clair.
+ * Une ligne = un essai. La fenêtre glissante ignore, puis supprime, les lignes périmées.
+ */
+export const limiteTentative = pgTable(
+  "limite_tentative",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    portee: text("portee").notNull(),
+    cle: text("cle").notNull(),
+    sujet: text("sujet"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_limite_tentative_cle").on(t.portee, t.cle, t.createdAt),
+    index("idx_limite_tentative_sujet").on(t.portee, t.sujet),
+    index("idx_limite_tentative_created").on(t.createdAt),
+    check(
+      "limite_tentative_portee",
+      sql`${t.portee} IN ('connexion_email', 'connexion_ip', 'mot_de_passe_sujet', 'mot_de_passe_ip', 'validation_sujet', 'validation_ip')`,
+    ),
+  ],
+);
