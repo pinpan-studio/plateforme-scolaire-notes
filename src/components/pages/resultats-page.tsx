@@ -82,7 +82,7 @@ export function ResultatsPage() {
                     <tr key={item.eleveId} className="border-b border-border last:border-b-0">
                       <th scope="row" className="px-3 py-2 text-left font-medium">{item.nom} {item.prenom}</th>
                       <td className="px-3 py-2">{formatMoyenne(item.moyenneGenerale)}</td>
-                      <td className="px-3 py-2">{formatRang(item.rang, item.effectif)}</td>
+                      <td className="px-3 py-2">{formatRang(item.rang, item.effectifClasse ?? item.effectif)}</td>
                       <td className="px-3 py-2">{item.appreciation}</td>
                       <td className="px-3 py-2">
                         <button type="button" className="font-medium text-primary" onClick={() => { setEleveId(item.eleveId); setTexte(item.appreciationGenerale ?? ""); }}>
@@ -99,7 +99,7 @@ export function ResultatsPage() {
             <section className="space-y-4 rounded-lg border border-border bg-card p-4">
               <h2 className="text-lg font-semibold">{ligne.nom} {ligne.prenom}</h2>
               <p className="text-sm">
-                Moyenne {formatMoyenne(ligne.moyenneGenerale)} · {formatRang(ligne.rang, ligne.effectif)} · {ligne.appreciation}
+                Moyenne {formatMoyenne(ligne.moyenneGenerale)} · {formatRang(ligne.rang, ligne.effectifClasse ?? ligne.effectif)} · {ligne.appreciation}
               </p>
               {ligne.matieresSansNote > 0 ? (
                 <p className="text-sm text-muted">{ligne.matieresSansNote} matières sans note, non comptées.</p>
@@ -120,7 +120,7 @@ export function ResultatsPage() {
                       <th scope="row" className="py-1 text-left font-normal">{matiere.nom}</th>
                       <td>{formatCoefficient(matiere.coefficient)}</td>
                       <td>{formatMoyenne(matiere.moyenne)}</td>
-                      <td>{formatRang(matiere.rang, ligne.effectif)}</td>
+                      <td>{formatRang(matiere.rang, matiere.effectifClasse)}</td>
                       <td>{matiere.appreciation}</td>
                     </tr>
                   ))}

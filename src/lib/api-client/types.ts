@@ -165,6 +165,8 @@ export type LigneMatiereResultat = {
   moyenne: number | null;
   appreciation: string;
   rang: number | null;
+  /** Élèves classés dans la matière. `0` si aucune moyenne n'est publiée. */
+  effectifClasse: number;
 };
 
 export type EleveFiche = {
@@ -185,6 +187,8 @@ export type EleveFiche = {
     moyenneGenerale: number | null;
     rang: number | null;
     effectif: number;
+    /** Élèves classés sur la moyenne générale. `null` si le bulletin est réduit. */
+    effectifClasse: number | null;
     appreciation: string;
     matieresSansNote: number;
     matieres: LigneMatiereResultat[];
@@ -321,6 +325,7 @@ export type LigneResultat = {
   moyenneGenerale: number | null;
   rang: number | null;
   effectif: number;
+  effectifClasse: number | null;
   appreciation: string;
   appreciationGenerale: string | null;
   matieresSansNote: number;
@@ -344,6 +349,8 @@ export type Bulletin = {
   matieres: LigneMatiereResultat[];
   moyenneGenerale: number | null;
   rang: number | null;
+  /** Élèves classés sur la moyenne générale. `null` si le bulletin est réduit. */
+  effectifClasse: number | null;
   appreciation: string;
   appreciationGenerale: string | null;
   peutRedigerAppreciation: boolean;
@@ -419,6 +426,7 @@ export type SyntheseClasse = {
     moyenne: number | null;
     rang: number | null;
     effectif: number;
+    effectifClasse: number | null;
     appreciation: string;
     appreciationGenerale: string | null;
     appreciationManquante: boolean;

@@ -97,7 +97,7 @@ export function SynthesePage({ classeInitiale }: { classeInitiale?: string }) {
                         {eleve.appreciationManquante ? " · appréciation manquante" : ""}
                       </th>
                       <td>{formatMoyenne(eleve.moyenne)}</td>
-                      <td>{formatRang(eleve.rang, eleve.effectif)}</td>
+                      <td>{formatRang(eleve.rang, eleve.effectifClasse ?? eleve.effectif)}</td>
                       <td>{eleve.appreciation}</td>
                     </tr>
                   ))}

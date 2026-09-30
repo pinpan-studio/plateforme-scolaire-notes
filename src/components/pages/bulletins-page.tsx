@@ -87,13 +87,13 @@ export function BulletinsPage() {
                       <td>{formatMoyenne(matiere.moyenne)}</td>
                       <td>{formatCoefficient(matiere.coefficient)}</td>
                       <td>{matiere.appreciation}</td>
-                      <td>{formatRang(matiere.rang, bulletin.data?.classe.effectif ?? 0)}</td>
+                      <td>{formatRang(matiere.rang, matiere.effectifClasse)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
               <p className="mt-4">
-                Moyenne générale {formatMoyenne(bulletin.data.moyenneGenerale)} · {formatRang(bulletin.data.rang, bulletin.data.classe.effectif)} · {bulletin.data.appreciation} · effectif {bulletin.data.classe.effectif}
+                Moyenne générale {formatMoyenne(bulletin.data.moyenneGenerale)} · {formatRang(bulletin.data.rang, bulletin.data.effectifClasse ?? bulletin.data.classe.effectif)} · {bulletin.data.appreciation} · effectif {bulletin.data.classe.effectif}
               </p>
               {bulletin.data.matieresSansNote > 0 ? <p className="text-muted">{bulletin.data.matieresSansNote} matières sans note, non comptées.</p> : null}
               <section className="mt-4">

@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import {
   affectationEnseignant,
   anneeScolaire,
@@ -63,17 +63,45 @@ function toGrades(rows: GradeRow[]): GradeInput[] {
   }));
 }
 
-function periodReport(subjects: SubjectRef[], rows: GradeRow[], eleveId: string): PeriodReport {
+function noteKey(eleveId: string, matiereId: string) {
+  return `${eleveId}\0${matiereId}`;
+}
+
+function indexerNotes(rows: GradeRow[]) {
+  const index = new Map<string, GradeRow[]>();
+  for (const row of rows) {
+    const key = noteKey(row.eleveId, row.matiereId);
+    const bucket = index.get(key);
+    if (bucket) bucket.push(row);
+    else index.set(key, [row]);
+  }
+  return index;
+}
+
+function periodReport(subjects: SubjectRef[], notes: Map<string, GradeRow[]>, eleveId: string): PeriodReport {
   const input: SubjectInput[] = subjects.map((subject) => ({
     id: subject.matiereId,
     coefficient: subject.coefficient,
-    grades: toGrades(rows.filter((row) => row.eleveId === eleveId && row.matiereId === subject.matiereId)),
+    grades: toGrades(notes.get(noteKey(eleveId, subject.matiereId)) ?? []),
   }));
   try {
     return computePeriodReport(input);
   } catch (error) {
     rethrowGrading(error);
   }
+}
+
+type Classement = { rang: number | null; effectifClasse: number };
+
+function classer<T>(items: readonly T[], score: (item: T) => number | null): Map<T, Classement> {
+  let ranked: ReturnType<typeof rankCompetition<T>>;
+  try {
+    ranked = rankCompetition(items, score);
+  } catch (error) {
+    rethrowGrading(error);
+  }
+  const effectifClasse = ranked.filter((entry) => entry.rank !== null).length;
+  return new Map(ranked.map((entry) => [entry.item, { rang: entry.rank, effectifClasse }]));
 }
 
 function mention(value: number | null): string {
@@ -113,10 +141,17 @@ async function matieresDeClasse(classeId: string) {
     .orderBy(asc(matiere.nom));
 }
 
-async function notesDeClasse(classeId: string, filtre: { periodeId?: string; matiereId?: string }) {
+async function notesDeClasse(
+  classeId: string,
+  filtre: { periodeId?: string; matiereId?: string; matiereIds?: string[] },
+) {
   const filters = [eq(evaluation.classeId, classeId)];
   if (filtre.periodeId) filters.push(eq(evaluation.periodeId, filtre.periodeId));
   if (filtre.matiereId) filters.push(eq(evaluation.matiereId, filtre.matiereId));
+  if (filtre.matiereIds) {
+    if (filtre.matiereIds.length === 0) return [];
+    filters.push(inArray(evaluation.matiereId, filtre.matiereIds));
+  }
   return getDb()
     .select({
       eleveId: note.eleveId,
@@ -140,10 +175,12 @@ async function notesDeClasse(classeId: string, filtre: { periodeId?: string; mat
 }
 
 function syntheseClasse(students: Inscrit[], subjects: SubjectRef[], rows: GradeRow[]) {
+  const notes = indexerNotes(rows);
   const lignes = students.map((student) => {
-    const report = periodReport(subjects, rows, student.eleveId);
+    const report = periodReport(subjects, notes, student.eleveId);
+    const moyennes = new Map(report.subjects.map((item) => [item.id, item.average.value]));
     const matieres = subjects.map((subject) => {
-      const moyenne = report.subjects.find((item) => item.id === subject.matiereId)?.average.value ?? null;
+      const moyenne = moyennes.get(subject.matiereId) ?? null;
       return {
         matiereId: subject.matiereId,
         code: subject.code,
@@ -160,16 +197,23 @@ function syntheseClasse(students: Inscrit[], subjects: SubjectRef[], rows: Grade
       appreciation: mention(report.overall.value),
     };
   });
-  const ranked = (() => {
-    try {
-      return rankCompetition(lignes, (ligne) => ligne.moyenneGenerale);
-    } catch (error) {
-      rethrowGrading(error);
-    }
-  })();
-  const rangs = new Map(ranked.map((entry) => [entry.item.eleveId, entry.rank]));
+  const rangGeneral = classer(lignes, (ligne) => ligne.moyenneGenerale);
+  const rangParMatiere = subjects.map((_, index) =>
+    classer(lignes, (ligne) => ligne.matieres[index]?.moyenne ?? null),
+  );
   return lignes
-    .map((ligne) => ({ ...ligne, rang: rangs.get(ligne.eleveId) ?? null }))
+    .map((ligne) => {
+      const general = rangGeneral.get(ligne) ?? { rang: null, effectifClasse: 0 };
+      return {
+        ...ligne,
+        rang: general.rang,
+        effectifClasse: general.effectifClasse,
+        matieres: ligne.matieres.map((matiere, index) => {
+          const sujet = rangParMatiere[index]?.get(ligne) ?? { rang: null, effectifClasse: 0 };
+          return { ...matiere, rang: sujet.rang, effectifClasse: sujet.effectifClasse };
+        }),
+      };
+    })
     .sort((a, b) => {
       if (a.rang === null && b.rang === null) return a.nom.localeCompare(b.nom, "fr") || a.prenom.localeCompare(b.prenom, "fr");
       if (a.rang === null) return 1;
@@ -243,33 +287,50 @@ export async function bulletin(session: SessionUser, request: Request) {
     .where(and(eq(eleve.id, eleveId), eq(inscription.statut, "INSCRIT")))
     .limit(1);
   if (!student) throw notFound("Élève introuvable.");
-  const { scope } = await assertClasseLisible(session, student.classeId);
-  const subjectsAll = await matieresDeClasse(student.classeId);
+  const [{ scope }, subjectsAll, periodeInfo] = await Promise.all([
+    assertClasseLisible(session, student.classeId),
+    matieresDeClasse(student.classeId),
+    periodeDuBulletin(periodeId),
+  ]);
   const allowed = subjectIdsForClass(scope, student.classeId);
   const subjects = allowed ? subjectsAll.filter((subject) => allowed.includes(subject.matiereId)) : subjectsAll;
   if (subjects.length === 0) {
     return refuse(session, "GET", "bulletin", eleveId, "Ce bulletin est hors de votre périmètre.");
   }
-  const rows = await notesDeClasse(student.classeId, { periodeId });
   const complet = allowed === null;
-  const lignes = syntheseClasse([student], complet ? subjectsAll : subjects, rows);
-  const ligne = lignes[0];
-  let periodeInfo: { id: string | null; libelle: string } = { id: null, libelle: "Année" };
-  if (periodeId) {
-    const [periodeRow] = await db.select().from(periode).where(eq(periode.id, periodeId)).limit(1);
-    if (!periodeRow) throw notFound("Période introuvable.");
-    periodeInfo = { id: periodeRow.id, libelle: periodeRow.libelle };
-  }
+  const sujetsDuCalcul = complet ? subjectsAll : subjects;
+  const [inscrits, rows] = await Promise.all([
+    inscritsDeClasse(student.classeId),
+    notesDeClasse(student.classeId, {
+      periodeId,
+      matiereIds: complet ? undefined : sujetsDuCalcul.map((subject) => subject.matiereId),
+    }),
+  ]);
+  const lignes = syntheseClasse(inscrits, sujetsDuCalcul, rows);
+  const ligne = lignes.find((item) => item.eleveId === student.eleveId);
+  if (!ligne) throw notFound("Élève introuvable.");
   return {
     eleve: { id: student.eleveId, matricule: student.matricule, nom: student.nom, prenom: student.prenom },
     classe: { id: student.classeId, nom: student.classeNom },
     periode: periodeInfo,
-    lignes: (ligne?.matieres ?? []).filter((item) => !allowed || allowed.includes(item.matiereId)),
-    moyenneGenerale: complet ? (ligne?.moyenneGenerale ?? null) : null,
-    appreciation: complet ? (ligne?.appreciation ?? "Non noté") : null,
-    rang: complet ? (ligne?.rang ?? null) : null,
-    effectif: complet ? (await inscritsDeClasse(student.classeId)).length : null,
+    lignes: ligne.matieres.filter((item) => !allowed || allowed.includes(item.matiereId)),
+    moyenneGenerale: complet ? ligne.moyenneGenerale : null,
+    appreciation: complet ? ligne.appreciation : null,
+    rang: complet ? ligne.rang : null,
+    effectif: complet ? inscrits.length : null,
+    effectifClasse: complet ? ligne.effectifClasse : null,
   };
+}
+
+async function periodeDuBulletin(periodeId: string | undefined) {
+  if (!periodeId) return { id: null, libelle: "Année" };
+  const [periodeRow] = await getDb()
+    .select({ id: periode.id, libelle: periode.libelle })
+    .from(periode)
+    .where(eq(periode.id, periodeId))
+    .limit(1);
+  if (!periodeRow) throw notFound("Période introuvable.");
+  return { id: periodeRow.id, libelle: periodeRow.libelle };
 }
 
 export async function analyseEleve(session: SessionUser, request: Request) {
@@ -286,7 +347,11 @@ export async function analyseClasse(session: SessionUser, request: Request) {
   const allowed = matiereId ? [matiereId] : subjectIdsForClass(scope, classeId);
   const subjects = allowed ? subjectsAll.filter((subject) => allowed.includes(subject.matiereId)) : subjectsAll;
   const students = await inscritsDeClasse(classeId);
-  const rows = await notesDeClasse(classeId, { periodeId, matiereId });
+  const rows = await notesDeClasse(classeId, {
+    periodeId,
+    matiereId,
+    matiereIds: allowed && !matiereId ? allowed : undefined,
+  });
   const lignes = syntheseClasse(students, subjects, rows);
   const complet = allowed === null;
   return {
@@ -297,6 +362,7 @@ export async function analyseClasse(session: SessionUser, request: Request) {
       moyenneGenerale: complet ? ligne.moyenneGenerale : null,
       appreciation: complet ? ligne.appreciation : null,
       rang: complet ? ligne.rang : null,
+      effectifClasse: complet ? ligne.effectifClasse : null,
     })),
     statistiques: complet ? statistiques(lignes) : statistiques(lignes.map((ligne) => ({
       moyenneGenerale: ligne.matieres.length === 1 ? ligne.matieres[0].moyenne : ligne.moyenneGenerale,
@@ -330,6 +396,7 @@ export async function analyseMatiere(session: SessionUser, request: Request) {
       moyenne: ligne.matieres[0]?.moyenne ?? null,
       appreciation: ligne.matieres[0]?.appreciation ?? "Non noté",
       rang: ligne.rang,
+      effectifClasse: ligne.effectifClasse,
     })),
     statistiques: {
       ...statistiques(moyennes.map((moyenne) => ({ moyenneGenerale: moyenne }))),

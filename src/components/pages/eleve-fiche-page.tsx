@@ -42,7 +42,7 @@ export function EleveFichePage({ eleveId }: { eleveId: string }) {
               {eleve.resultats ? (
                 <>
                   <p className="mt-3 text-sm">
-                    Moyenne générale {formatMoyenne(eleve.resultats.moyenneGenerale)} · {formatRang(eleve.resultats.rang, eleve.resultats.effectif)} · {eleve.resultats.appreciation}
+                    Moyenne générale {formatMoyenne(eleve.resultats.moyenneGenerale)} · {formatRang(eleve.resultats.rang, eleve.resultats.effectifClasse ?? eleve.resultats.effectif)} · {eleve.resultats.appreciation}
                   </p>
                   {eleve.resultats.matieresSansNote > 0 ? (
                     <p className="mt-1 text-sm text-muted">{eleve.resultats.matieresSansNote} matières sans note, non comptées.</p>
