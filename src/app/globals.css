@@ -49,5 +49,32 @@ body {
 
   body {
     background: white;
+    color: #0f172a;
+  }
+
+  .bulletin-impression {
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    color: #0f172a !important;
+    box-shadow: none !important;
+  }
+
+  .bulletin-impression table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .bulletin-impression th,
+  .bulletin-impression td {
+    border: 1px solid #0f172a;
+    padding: 4px 6px;
+    color: #0f172a;
+  }
+
+  .bulletin-impression tr,
+  .bulletin-impression section {
+    break-inside: avoid;
   }
 }

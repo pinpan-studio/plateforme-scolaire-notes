@@ -252,6 +252,26 @@ async function ignorerInterdit<T>(promesse: Promise<T>, repli: T): Promise<T> {
   }
 }
 
+/** Texte libre du professeur principal, distinct de la mention calculée. Une entrée par période. */
+async function lireAppreciationGenerale(eleveId: string, periodeId: string | undefined): Promise<string | null> {
+  if (!periodeId) return null;
+  const payload = await ignorerInterdit(
+    apiFetch(listeQuery("/api/appreciations-generales", versApi({ eleveId, periodeId }))),
+    { appreciations: [] },
+  );
+  const brut = rec(payload).appreciations;
+  const liste = Array.isArray(brut) ? brut : [];
+  for (const row of liste) {
+    const item = rec(row);
+    if (str(item.eleveId) !== eleveId) continue;
+    const periode = str(item.periodeId);
+    if (periode && periode !== periodeId) continue;
+    const texte = str(item.texte).trim();
+    if (texte) return texte;
+  }
+  return null;
+}
+
 export const api = {
   session: async (): Promise<Session> => {
     const corps = rec(await apiFetch("/api/auth/session"));
@@ -602,18 +622,21 @@ export const api = {
 
   bulletin: async (eleveId: string, params: ListeParams): Promise<Bulletin> => {
     const document = rec(await apiFetch(listeQuery("/api/bulletins", versApi({ ...params, eleveId }))));
-    const etablissement = await ignorerInterdit(api.etablissement(), {
-      id: "",
-      nom: "",
-      adresse: "",
-      telephone: "",
-      email: "",
-    });
+    const [etablissement, session, appreciationGenerale] = await Promise.all([
+      ignorerInterdit(api.etablissement(), {
+        id: "",
+        nom: "",
+        adresse: "",
+        telephone: "",
+        email: "",
+      }),
+      ignorerInterdit(api.session(), null),
+      lireAppreciationGenerale(eleveId, params.periodeId),
+    ]);
     const eleve = rec(document.eleve);
     const classe = rec(document.classe);
     const periode = document.periode ? rec(document.periode) : null;
     const matieres = Array.isArray(document.lignes) ? document.lignes.map((ligne) => mapMatiereResultat(ligne)) : [];
-    const session = await ignorerInterdit(api.session(), null);
     return {
       etablissement: { nom: etablissement.nom, adresse: etablissement.adresse },
       eleve: { id: str(eleve.id), matricule: str(eleve.matricule), nom: str(eleve.nom), prenom: str(eleve.prenom) },
@@ -624,7 +647,7 @@ export const api = {
       rang: numOrNull(document.rang),
       effectifClasse: numOrNull(document.effectifClasse),
       appreciation: str(document.appreciation),
-      appreciationGenerale: null,
+      appreciationGenerale,
       peutRedigerAppreciation: session?.utilisateur.role === "ADMIN" || session?.utilisateur.role === "PROFESSEUR_PRINCIPAL",
       matieresSansNote: matieres.filter((ligne) => ligne.moyenne === null).length,
       reduitAuxMatieres: document.moyenneGenerale === null && session?.utilisateur.role === "ENSEIGNANT",
