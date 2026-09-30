@@ -1,3 +1,5 @@
+import { preparerEnregistrement } from "@/lib/api-client/enregistrement-notes";
+import { droitSaisie, estAffecte } from "@/lib/droit-saisie";
 import { ApiError, apiFetch, listeQuery } from "@/lib/api-client/http";
 import type {
   Affectation,
@@ -569,28 +571,17 @@ export const api = {
   grille: (evaluationId: string) => chargerGrille(evaluationId),
 
   enregistrerNotes: async (evaluationId: string, lignes: LigneNoteEnvoi[]): Promise<EnregistrementNotes> => {
-    const aSupprimer = lignes.filter((ligne) => ligne.supprimer);
-    const aEcrire = lignes.filter((ligne) => !ligne.supprimer);
-    for (const ligne of aSupprimer) {
-      if (!ligne.noteId || ligne.version === null) continue;
-      await apiFetch(`/api/notes/${ligne.noteId}`, {
+    const plan = preparerEnregistrement(lignes);
+    for (const suppression of plan.suppressions) {
+      await apiFetch(`/api/notes/${suppression.noteId}`, {
         method: "DELETE",
-        body: JSON.stringify({ version: ligne.version }),
+        body: JSON.stringify({ version: suppression.version }),
       });
     }
-    if (aEcrire.length > 0) {
+    if (plan.lot.length > 0) {
       await apiFetch("/api/notes/lot", {
         method: "POST",
-        body: JSON.stringify({
-          evaluationId,
-          lignes: aEcrire.map((ligne) => ({
-            eleveId: ligne.eleveId,
-            valeur: ligne.absent ? null : ligne.valeur,
-            estAbsent: ligne.absent,
-            commentaire: ligne.commentaire,
-            version: ligne.version,
-          })),
-        }),
+        body: JSON.stringify({ evaluationId, lignes: plan.lot }),
       });
     }
     return { message: "Notes enregistrées.", grille: await chargerGrille(evaluationId) };
@@ -723,7 +714,26 @@ async function chargerGrille(evaluationId: string): Promise<GrilleNotes> {
   const annee = annees.find((item) => item.id === evaluation.anneeScolaireId);
   const role = session.utilisateur.role;
   const fermee = annee?.statut === "CLOTUREE";
-  const peutModifier = role === "ADMIN" || ((role === "ENSEIGNANT" || role === "PROFESSEUR_PRINCIPAL") && !fermee);
+  const verifieAffectation = !fermee && (role === "ENSEIGNANT" || role === "PROFESSEUR_PRINCIPAL");
+  const affectations = verifieAffectation
+    ? await api.affectations({
+        anneeId: evaluation.anneeScolaireId,
+        classeId: evaluation.classeId,
+        matiereId: evaluation.matiereId,
+        enseignantId: session.utilisateur.enseignantId ?? undefined,
+        page: 1,
+        pageSize: 100,
+      })
+    : null;
+  const affecte = affectations
+    ? estAffecte(affectations.items, {
+        enseignantId: session.utilisateur.enseignantId,
+        classeId: evaluation.classeId,
+        matiereId: evaluation.matiereId,
+        anneeScolaireId: evaluation.anneeScolaireId,
+      })
+    : false;
+  const droit = droitSaisie({ role, anneeCloturee: fermee, affecte });
   const lignes: LigneGrille[] = eleves.items.map((eleve) => {
     const note = parEleve.get(eleve.id);
     return {
@@ -740,8 +750,8 @@ async function chargerGrille(evaluationId: string): Promise<GrilleNotes> {
   });
   return {
     evaluation,
-    peutModifier,
-    motifLectureSeule: peutModifier ? null : fermee ? "Année clôturée." : "Lecture seule.",
+    peutModifier: droit.peutModifier,
+    motifLectureSeule: droit.motifLectureSeule,
     lignes,
   };
 }
