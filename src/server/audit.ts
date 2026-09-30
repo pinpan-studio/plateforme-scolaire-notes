@@ -50,10 +50,17 @@ export function auditPour(
   };
 }
 
-/** Le journal ne reçoit ni hachage, ni mot de passe temporaire, ni jeton. */
-function assertValeurAuditable(value: string | null | undefined) {
+/**
+ * Le journal ne reçoit ni hachage, ni mot de passe temporaire, ni jeton dans les valeurs avant/après.
+ * L'identifiant n'est pas filtré : c'est souvent l'e-mail de l'acteur, qui peut contenir « tmp- » ou « motdepasse ».
+ * Le mot de passe temporaire généré est ancré en début de valeur (`Tmp-`).
+ */
+export function assertValeurAuditable(value: string | null | undefined) {
   if (!value) return;
-  if (/\$2[aby]\$|motDePasse|mot_de_passe|Tmp-|bearer\s|eyJ[A-Za-z0-9_-]{8,}\./i.test(value)) {
+  const secret =
+    /^Tmp-/.test(value) ||
+    /\$2[aby]\$|"mot_?de_?passe|bearer\s|eyJ[A-Za-z0-9_-]{8,}\./i.test(value);
+  if (secret) {
     throw new ApiError(500, "ERREUR_INTERNE", "Une erreur interne est survenue.");
   }
 }
@@ -61,7 +68,6 @@ function assertValeurAuditable(value: string | null | undefined) {
 export async function writeAudit(entry: AuditEntry, executor?: Executor) {
   assertValeurAuditable(entry.ancienneValeur);
   assertValeurAuditable(entry.nouvelleValeur);
-  assertValeurAuditable(entry.identifiant);
   const db = executor ?? getDb();
   await db.insert(journalAudit).values({
     type: entry.type,

@@ -1,5 +1,5 @@
 -- Étend les types du journal d'audit (utilisateur, affectation, barème, état d'année).
--- Numéro 0004 : ne pas réutiliser 0003 (migration parallèle du limiteur de tentatives).
+-- Numéro 0004, idx 4 : 0003 (limiteur de tentatives, idx 3) est déjà pris.
 -- when 1790800000000, strictement postérieur à 0002 (1790692000000) et à 0003 (1790763824949).
 -- Rollback :
 --   ALTER TABLE "journal_audit" DROP CONSTRAINT "journal_audit_type";

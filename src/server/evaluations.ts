@@ -220,22 +220,32 @@ export async function updateEvaluation(session: SessionUser, id: string, body: u
   const row = await db.transaction(async (tx) => {
     const [locked] = await tx.select().from(evaluation).where(eq(evaluation.id, id)).limit(1).for("update");
     if (!locked) throw notFound("Évaluation introuvable.");
+    const classeId = input.classeId ?? locked.classeId;
+    const matiereId = input.matiereId ?? locked.matiereId;
+    const periodeId = input.periodeId ?? locked.periodeId;
     const noteMax = input.noteMax ?? locked.noteMax;
     const coefficient = input.coefficient ?? locked.coefficient;
+    const classeChange = classeId !== locked.classeId;
+    const matiereChange = matiereId !== locked.matiereId;
+    const periodeChange = periodeId !== locked.periodeId;
     const noteMaxChange = Number(noteMax) !== Number(locked.noteMax);
     const coefficientChange = Number(coefficient) !== Number(locked.coefficient);
-    if (noteMaxChange) {
+    if (classeChange || matiereChange || periodeChange || noteMaxChange) {
       const [{ total }] = await tx.select({ total: count() }).from(note).where(eq(note.evaluationId, id));
       if (total > 0) {
-        throw new ApiError(409, "CONFLIT", "Impossible de modifier la note maximale tant que des notes existent.");
+        throw new ApiError(
+          409,
+          "CONFLIT",
+          "Impossible de modifier la classe, la matière, la période ou la note maximale tant que des notes existent.",
+        );
       }
     }
     const [updated] = await tx
       .update(evaluation)
       .set({
-        classeId: input.classeId ?? locked.classeId,
-        matiereId: input.matiereId ?? locked.matiereId,
-        periodeId: input.periodeId ?? locked.periodeId,
+        classeId,
+        matiereId,
+        periodeId,
         enseignantId: locked.enseignantId,
         type: input.type ?? locked.type,
         libelle: input.libelle ?? locked.libelle,

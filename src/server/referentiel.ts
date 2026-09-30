@@ -115,6 +115,13 @@ export async function createAnnee(session: SessionUser, body: unknown) {
   return row;
 }
 
+class ReouvertureRefusee extends Error {
+  constructor(readonly statutDemande: string) {
+    super("reouverture_refusee");
+    this.name = "ReouvertureRefusee";
+  }
+}
+
 export async function updateAnnee(session: SessionUser, id: string, body: unknown) {
   if (!canWriteYear(session.role)) throw forbidden();
   const input = parseBody(patchAnneeSchema, body);
@@ -123,46 +130,62 @@ export async function updateAnnee(session: SessionUser, id: string, body: unknow
       { path: "dateFin", message: "La fin est postérieure au début." },
     ]);
   }
-  const [row] = await getDb().transaction(async (tx) => {
-    const [current] = await tx
-      .select()
-      .from(anneeScolaire)
-      .where(eq(anneeScolaire.id, id))
-      .limit(1)
-      .for("update");
-    if (!current) throw notFound("Année introuvable.");
-    const statut = input.statut ?? current.statut;
-    const reouverture = current.statut === "CLOTUREE" && statut !== "CLOTUREE";
-    if (reouverture && session.role !== "ADMIN") {
-      throw forbidden("Seule l'administration peut rouvrir une année clôturée.");
-    }
-    const [updated] = await tx
-      .update(anneeScolaire)
-      .set({
-        libelle: input.libelle ?? current.libelle,
-        dateDebut: input.dateDebut ?? current.dateDebut,
-        dateFin: input.dateFin ?? current.dateFin,
-        statut,
-      })
-      .where(eq(anneeScolaire.id, id))
-      .returning();
-    if (current.statut !== updated.statut) {
-      await writeAudit(
-        auditPour(session, {
-          type: "ANNEE_STATUT",
-          resultat: "200",
-          action: "PATCH",
-          cibleType: "annee_scolaire",
-          cibleId: updated.id,
-          ancienneValeur: current.statut,
-          nouvelleValeur: updated.statut,
-        }),
-        tx,
-      );
-    }
-    return [updated];
-  });
-  return row;
+  try {
+    const [row] = await getDb().transaction(async (tx) => {
+      const [current] = await tx
+        .select()
+        .from(anneeScolaire)
+        .where(eq(anneeScolaire.id, id))
+        .limit(1)
+        .for("update");
+      if (!current) throw notFound("Année introuvable.");
+      const statut = input.statut ?? current.statut;
+      const reouverture = current.statut === "CLOTUREE" && statut !== "CLOTUREE";
+      if (reouverture && session.role !== "ADMIN") {
+        throw new ReouvertureRefusee(statut);
+      }
+      const [updated] = await tx
+        .update(anneeScolaire)
+        .set({
+          libelle: input.libelle ?? current.libelle,
+          dateDebut: input.dateDebut ?? current.dateDebut,
+          dateFin: input.dateFin ?? current.dateFin,
+          statut,
+        })
+        .where(eq(anneeScolaire.id, id))
+        .returning();
+      if (current.statut !== updated.statut) {
+        await writeAudit(
+          auditPour(session, {
+            type: "ANNEE_STATUT",
+            resultat: "200",
+            action: "PATCH",
+            cibleType: "annee_scolaire",
+            cibleId: updated.id,
+            ancienneValeur: current.statut,
+            nouvelleValeur: updated.statut,
+          }),
+          tx,
+        );
+      }
+      return [updated];
+    });
+    return row;
+  } catch (error) {
+    if (!(error instanceof ReouvertureRefusee)) throw error;
+    await writeAudit(
+      auditPour(session, {
+        type: "AUTORISATION_REFUSEE",
+        resultat: "403",
+        action: "PATCH",
+        cibleType: "annee_scolaire",
+        cibleId: id,
+        ancienneValeur: "CLOTUREE",
+        nouvelleValeur: error.statutDemande,
+      }),
+    );
+    throw forbidden("Seule l'administration peut rouvrir une année clôturée.");
+  }
 }
 
 export async function listPeriodes(session: SessionUser, request: Request) {
@@ -577,19 +600,21 @@ export async function updateUtilisateur(session: SessionUser, id: string, body: 
   assertWriteReferential(session);
   const input = parseBody(patchUtilisateurSchema, body);
   const db = getDb();
-  const [current] = await db.select().from(utilisateur).where(eq(utilisateur.id, id)).limit(1);
-  if (!current) throw notFound("Utilisateur introuvable.");
-  let motDePasseHash = current.motDePasseHash;
   const motDePasseChange = Boolean(input.motDePasse);
+  let nouveauHash: string | undefined;
   if (input.motDePasse) {
+    const [avant] = await db.select().from(utilisateur).where(eq(utilisateur.id, id)).limit(1);
+    if (!avant) throw notFound("Utilisateur introuvable.");
     if (!input.motDePasseActuel) {
       throw new ApiError(403, "FORBIDDEN", "Le mot de passe actuel est requis.");
     }
-    const ok = await verifyPassword(input.motDePasseActuel, current.motDePasseHash);
+    const ok = await verifyPassword(input.motDePasseActuel, avant.motDePasseHash);
     if (!ok) throw new ApiError(403, "FORBIDDEN", "Le mot de passe actuel est requis.");
-    motDePasseHash = await hashPassword(input.motDePasse);
+    nouveauHash = await hashPassword(input.motDePasse);
   }
   const [row] = await db.transaction(async (tx) => {
+    const [current] = await tx.select().from(utilisateur).where(eq(utilisateur.id, id)).limit(1).for("update");
+    if (!current) throw notFound("Utilisateur introuvable.");
     const [updated] = await tx
       .update(utilisateur)
       .set({
@@ -599,7 +624,7 @@ export async function updateUtilisateur(session: SessionUser, id: string, body: 
         actif: input.actif ?? current.actif,
         roleCode: input.roleCode ?? current.roleCode,
         enseignantId: input.enseignantId === undefined ? current.enseignantId : input.enseignantId,
-        motDePasseHash,
+        motDePasseHash: nouveauHash ?? current.motDePasseHash,
         ...(motDePasseChange ? { sessionVersion: sql`${utilisateur.sessionVersion} + 1` } : {}),
       })
       .where(eq(utilisateur.id, id))
@@ -652,11 +677,13 @@ export async function changerMotDePasse(session: SessionUser, body: unknown) {
   if (!current || !current.actif) throw forbidden("Compte indisponible.");
   const ok = await verifyPassword(input.motDePasseActuel, current.motDePasseHash);
   if (!ok) throw new ApiError(403, "FORBIDDEN", "Le mot de passe actuel est requis.");
-  const motDePasseHash = await hashPassword(input.motDePasse);
   await db.transaction(async (tx) => {
     await tx
       .update(utilisateur)
-      .set({ motDePasseHash, sessionVersion: sql`${utilisateur.sessionVersion} + 1` })
+      .set({
+        motDePasseHash: await hashPassword(input.motDePasse),
+        sessionVersion: sql`${utilisateur.sessionVersion} + 1`,
+      })
       .where(eq(utilisateur.id, current.id));
     await writeAudit(
       auditPour(session, {
@@ -679,12 +706,11 @@ export async function definirMotDePasseTemporaire(session: SessionUser, id: stri
   const [current] = await db.select().from(utilisateur).where(eq(utilisateur.id, id)).limit(1);
   if (!current) throw notFound("Utilisateur introuvable.");
   const motDePasseTemporaire = `Tmp-${randomBytes(9).toString("base64url")}`;
-  const motDePasseHash = await hashPassword(motDePasseTemporaire);
   await db.transaction(async (tx) => {
     await tx
       .update(utilisateur)
       .set({
-        motDePasseHash,
+        motDePasseHash: await hashPassword(motDePasseTemporaire),
         sessionVersion: sql`${utilisateur.sessionVersion} + 1`,
       })
       .where(eq(utilisateur.id, id));

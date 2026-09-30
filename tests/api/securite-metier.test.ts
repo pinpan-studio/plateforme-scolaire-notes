@@ -10,7 +10,7 @@ import { GET as getEleves, POST as postEleves } from "@/app/api/eleves/route";
 import { DELETE as deleteEleve, GET as getEleve, PATCH as patchEleve } from "@/app/api/eleves/[id]/route";
 import { POST as postEvaluations } from "@/app/api/evaluations/route";
 import { DELETE as deleteEvaluation, GET as getEvaluation, PATCH as patchEvaluation } from "@/app/api/evaluations/[id]/route";
-import { POST as postMatieres } from "@/app/api/matieres/route";
+import { GET as getMatieres, POST as postMatieres } from "@/app/api/matieres/route";
 import { DELETE as deleteMatiere, PATCH as patchMatiere } from "@/app/api/matieres/[id]/route";
 import { POST as postNotes } from "@/app/api/notes/route";
 import { DELETE as deleteNote } from "@/app/api/notes/[id]/route";
@@ -19,6 +19,7 @@ import { PATCH as patchProfil } from "@/app/api/profil/mot-de-passe/route";
 import { POST as postUtilisateurs } from "@/app/api/utilisateurs/route";
 import { PATCH as patchUtilisateur } from "@/app/api/utilisateurs/[id]/route";
 import { POST as postMotDePasseTemporaire } from "@/app/api/utilisateurs/[id]/mot-de-passe-temporaire/route";
+import { assertValeurAuditable } from "@/server/audit";
 import { call, jsonOf, login } from "./helpers";
 
 const MOT_DE_PASSE_A = "Audit-Test-2026!";
@@ -69,6 +70,9 @@ describe("réouverture d'année, notes existantes et audit", () => {
   it("réserve la réouverture d'une année clôturée à l'admin et l'audite", async () => {
     const admin = await login("admin@tilleuls.demo");
     const direction = await login("direction@tilleuls.demo");
+    const directionSession = (await jsonOf(await call(getSession, "/api/auth/session", { cookie: direction })))
+      .utilisateur as { id: string; email: string; role: string };
+    expect(directionSession.role).toBe("DIRECTION");
     const enseignant = await login("nathan.durand@tilleuls.demo");
     const session = (await jsonOf(await call(getSession, "/api/auth/session", { cookie: admin }))).utilisateur as {
       id: string;
@@ -86,6 +90,9 @@ describe("réouverture d'année, notes existantes et audit", () => {
     expect(close?.statut).toBe("CLOTUREE");
     const id = close!.id;
     const avant = (await audits(admin)).filter((ligne) => ligne.type === "ANNEE_STATUT" && ligne.cibleId === id).length;
+    const avantRefus = (await audits(admin)).filter(
+      (ligne) => ligne.type === "AUTORISATION_REFUSEE" && ligne.cibleId === id,
+    ).length;
 
     const directionTente = await call(patchAnnee, `/api/annees/${id}`, {
       method: "PATCH",
@@ -95,6 +102,20 @@ describe("réouverture d'année, notes existantes et audit", () => {
     });
     expect(directionTente.status).toBe(403);
     expect(((await jsonOf(directionTente)) as Erreur).error?.code).toBe("FORBIDDEN");
+    const refus = (await audits(admin)).filter(
+      (ligne) => ligne.type === "AUTORISATION_REFUSEE" && ligne.cibleId === id,
+    );
+    expect(refus).toHaveLength(avantRefus + 1);
+    assertTrace(refus[0], {
+      acteurId: directionSession.id,
+      identifiant: directionSession.email,
+      resultat: "403",
+      action: "PATCH",
+      cibleType: "annee_scolaire",
+      ancienneValeur: "CLOTUREE",
+      nouvelleValeur: "PREPARATION",
+    });
+    sansSecret(refus);
 
     const roleDansLeCorps = await call(patchAnnee, `/api/annees/${id}`, {
       method: "PATCH",
@@ -112,10 +133,9 @@ describe("réouverture d'année, notes existantes et audit", () => {
       body: { statut: "EN_COURS" },
     });
     expect(enseignantTente.status).toBe(403);
-
-    const sessionDirection = (await jsonOf(await call(getSession, "/api/auth/session", { cookie: direction })))
-      .utilisateur as { role: string };
-    expect(sessionDirection.role).toBe("DIRECTION");
+    expect(
+      (await audits(admin)).filter((ligne) => ligne.type === "AUTORISATION_REFUSEE" && ligne.cibleId === id),
+    ).toHaveLength(avantRefus + 1);
 
     const toujoursClose = (await jsonOf(await call(getAnnees, "/api/annees", { cookie: admin }))) as unknown as Array<{
       id: string;
@@ -282,7 +302,7 @@ describe("réouverture d'année, notes existantes et audit", () => {
     const sixieme = classes.find((classe) => classe.nom === "6e A")!;
     const periodes = (await jsonOf(
       await call(getPeriodes, `/api/periodes?anneeScolaireId=${sixieme.anneeScolaireId}`, { cookie: admin }),
-    )) as unknown as Array<{ id: string; dateDebut: string }>;
+    )) as unknown as Array<{ id: string; dateDebut: string; dateFin: string }>;
     const periode = periodes[0];
     const eleves = (
       (await jsonOf(await call(getEleves, `/api/eleves?classeId=${sixieme.id}&pageSize=1`, { cookie: admin })))
@@ -386,6 +406,42 @@ describe("réouverture d'année, notes existantes et audit", () => {
       );
       expect(fiche.noteMax).toBe(10);
 
+      const cinquieme = classes.find(
+        (classe) => classe.nom === "5e A" && classe.anneeScolaireId === sixieme.anneeScolaireId,
+      );
+      expect(cinquieme?.id).toBeTruthy();
+      const matieres = (await jsonOf(await call(getMatieres, "/api/matieres", { cookie: admin }))) as unknown as Array<{
+        id: string;
+      }>;
+      const autreMatiere = matieres.find((row) => row.id !== matiereId);
+      expect(autreMatiere?.id).toBeTruthy();
+      const autrePeriode = periodes.find((row) => row.id !== periode.id);
+      expect(autrePeriode?.id).toBeTruthy();
+      for (const body of [
+        { classeId: cinquieme!.id },
+        { matiereId: autreMatiere!.id },
+        { periodeId: autrePeriode!.id },
+      ]) {
+        const refuseChamp = await call(patchEvaluation, `/api/evaluations/${evaluationId}`, {
+          method: "PATCH",
+          cookie: admin,
+          params: { id: evaluationId },
+          body,
+        });
+        expect(refuseChamp.status).toBe(409);
+        expect(((await jsonOf(refuseChamp)) as Erreur).error?.code).toBe("CONFLIT");
+      }
+      const ancree = await jsonOf(
+        await call(getEvaluation, `/api/evaluations/${evaluationId}`, {
+          cookie: admin,
+          params: { id: evaluationId },
+        }),
+      );
+      expect(ancree.classeId).toBe(sixieme.id);
+      expect(ancree.matiereId).toBe(matiereId);
+      expect(ancree.periodeId).toBe(periode.id);
+      expect(ancree.noteMax).toBe(10);
+
       const identique = await call(patchEvaluation, `/api/evaluations/${evaluationId}`, {
         method: "PATCH",
         cookie: admin,
@@ -413,6 +469,21 @@ describe("réouverture d'année, notes existantes et audit", () => {
         ancienneValeur: JSON.stringify({ coefficient: 1 }),
         nouvelleValeur: JSON.stringify({ coefficient: 2 }),
       });
+
+      const dateChange = await call(patchEvaluation, `/api/evaluations/${evaluationId}`, {
+        method: "PATCH",
+        cookie: admin,
+        params: { id: evaluationId },
+        body: { date: periode.dateFin, libelle: "Contrôle audit daté" },
+      });
+      expect(dateChange.status).toBe(200);
+      const datee = await jsonOf(dateChange);
+      expect(datee.date).toBe(periode.dateFin);
+      expect(datee.libelle).toBe("Contrôle audit daté");
+      expect(datee.coefficient).toBe(2);
+      expect(datee.classeId).toBe(sixieme.id);
+      expect(datee.matiereId).toBe(matiereId);
+      expect(datee.periodeId).toBe(periode.id);
     } finally {
       if (noteId) {
         await call(deleteNote, `/api/notes/${noteId}`, { method: "DELETE", cookie: admin, params: { id: noteId } });
@@ -564,5 +635,68 @@ describe("réouverture d'année, notes existantes et audit", () => {
       ancienneValeur: JSON.stringify({ role: "DIRECTION", actif: true }),
       nouvelleValeur: JSON.stringify({ role: "DIRECTION", actif: false }),
     });
+  });
+
+  it("accepte un e-mail contenant tmp- et motdepasse à la création et à la connexion", async () => {
+    const admin = await login("admin@tilleuls.demo");
+    const session = (await jsonOf(await call(getSession, "/api/auth/session", { cookie: admin }))).utilisateur as {
+      email: string;
+    };
+    const email = "jean.tmp-motdepasse@tilleuls.demo";
+    const creation = await call(postUtilisateurs, "/api/utilisateurs", {
+      method: "POST",
+      cookie: admin,
+      body: {
+        email,
+        motDePasse: MOT_DE_PASSE_A,
+        roleCode: "CONSULTATION",
+        prenom: "Jean",
+        nom: "Martin",
+      },
+    });
+    expect(creation.status).toBe(201);
+    const id = String((await jsonOf(creation)).id);
+    const trace = derniere(await audits(admin), "UTILISATEUR_CREATION", id);
+    assertTrace(trace, {
+      identifiant: session.email,
+      nouvelleValeur: JSON.stringify({ email, role: "CONSULTATION", actif: true }),
+    });
+
+    const cookie = await login(email, MOT_DE_PASSE_A);
+    expect(cookie).toContain("=");
+    const succes = (await audits(admin)).find((ligne) => ligne.type === "AUTH_SUCCES" && ligne.identifiant === email);
+    expect(succes?.resultat).toBe("200");
+    expect(succes?.acteurId).toBe(id);
+  });
+
+  it("refuse encore les vraies valeurs sensibles dans l'audit", () => {
+    const jeton = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature";
+    for (const secret of [
+      "Tmp-abcdefghijklmnopqrst",
+      "$2b$12$abcdefghijklmnopqrstuvwx",
+      "Bearer jeton-de-session",
+      jeton,
+      '{"motDePasse":"secret"}',
+      '{"mot_de_passe":"secret"}',
+      '{"motDePasseHash":"$2a$10$abcdefghijklmnopqrstuv"}',
+    ]) {
+      let caught: unknown;
+      try {
+        assertValeurAuditable(secret);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({ status: 500, code: "ERREUR_INTERNE" });
+    }
+    expect(() => assertValeurAuditable("jean.tmp-motdepasse@tilleuls.demo")).not.toThrow();
+    expect(() =>
+      assertValeurAuditable(
+        JSON.stringify({ email: "jean.tmp-motdepasse@tilleuls.demo", role: "CONSULTATION", actif: true }),
+      ),
+    ).not.toThrow();
+    expect(() => assertValeurAuditable("defini")).not.toThrow();
+    expect(() => assertValeurAuditable("reinitialise")).not.toThrow();
+    expect(() => assertValeurAuditable("CLOTUREE")).not.toThrow();
+    expect(() => assertValeurAuditable(null)).not.toThrow();
   });
 });
