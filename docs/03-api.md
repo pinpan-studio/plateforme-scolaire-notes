@@ -50,7 +50,7 @@ Réponse `200` : `{ "utilisateur": { "id", "email", "role", "enseignantId", "pre
 | 403 | `CSRF` | `Origin` hostile ou `Sec-Fetch-Site: cross-site` |
 | 403 | `ACCOUNT_DISABLED` | Connexion d'un compte inactif |
 | 404 | `NOT_FOUND` | Identifiant inconnu |
-| 409 | `CONFLIT` | Unicité, version périmée, suppression encore référencée |
+| 409 | `CONFLIT` | Unicité, version périmée, suppression encore référencée, déplacement d'un élève noté, `noteMax` modifié alors que des notes existent |
 | 422 | `VALIDATION` | Zod, barème, inscription, règle de gestion |
 | 429 | `RATE_LIMITED` | Login, recherche ou écriture de notes |
 | 500 | `ERREUR_INTERNE` | Message générique, sans pile ni SQL |
@@ -73,7 +73,7 @@ Un professeur principal ne saisit pas les notes de ses collègues. Une année `C
 
 La lecture d'une note hors périmètre est un `403` dont le corps ne contient pas la valeur. Un lot qui mélange une ligne autorisée et une ligne hors périmètre est rejeté en entier (`403`), sans écriture. Une ligne invalide (barème, absence contradictoire, élève hors classe) rejette le lot en `422`, sans écriture.
 
-Les suppressions qui casseraient des données sont des `409` : élève qui a des notes, classe qui a des inscriptions, affectations ou évaluations, matière ou évaluation encore référencée. La base, elle, cascade certaines lignes ; l'API refuse avant.
+Les suppressions qui casseraient des données sont des `409` : élève qui a des notes, classe qui a des inscriptions, affectations ou évaluations, matière ou évaluation encore référencée. Déplacer un élève vers une autre classe, ou changer la note maximale d'une évaluation, est aussi un `409` tant que des notes existent. La vérification et l'écriture se font dans la même transaction. La base, elle, cascade certaines lignes ; l'API refuse avant.
 
 ## 4. Pagination et filtres
 
@@ -104,7 +104,7 @@ Sauf mention, le corps des écritures est du JSON et la session est obligatoire.
 }
 ```
 
-Le matricule est trimé puis mis en capitales. La création inscrit l'élève dans la classe. `DELETE` d'un élève noté : `409`. `PATCH` peut changer `classeId` (déplacement dans l'année de la classe). Le matricule n'est pas modifiable. `version` (horodatage ISO renvoyé par l'API) provoque un `409` si la fiche a changé.
+Le matricule est trimé puis mis en capitales. La création inscrit l'élève dans la classe. `DELETE` d'un élève noté : `409`. `PATCH` peut changer `classeId` (déplacement dans l'année de la classe) seulement s'il n'a aucune note dans la classe quittée ; sinon `409` et la classe reste inchangée. Une mise à jour sans changement de classe (nom, prénom) reste possible. Le matricule n'est pas modifiable. `version` (horodatage ISO renvoyé par l'API) provoque un `409` si la fiche a changé.
 
 ### Classes et inscriptions
 
@@ -155,7 +155,7 @@ L'année de l'affectation est celle de la classe. Une classe n'a qu'un enseignan
 | GET | `/api/niveaux` | tout compte authentifié |
 | GET, PATCH | `/api/etablissement` | PATCH ADMIN, GET ADMIN et DIRECTION |
 
-Une seule année `EN_COURS`. Ouvrir une deuxième sans clôturer la précédente : `409`.
+Une seule année `EN_COURS`. Ouvrir une deuxième sans clôturer la précédente : `409`. Rouvrir une année `CLOTUREE` (la passer à `PREPARATION` ou `EN_COURS`) est réservé à `ADMIN`. `DIRECTION` et les autres rôles reçoivent `403`. Le rôle lu est celui de la session : un rôle dans le corps ou un en-tête n'est pas pris en compte (corps strict : `422`). Clôturer reste ouvert à `ADMIN` et `DIRECTION`. Chaque changement de statut est journalisé dans la même transaction (acteur, ancien statut, nouveau statut, horodatage).
 
 ### Comptes
 
@@ -198,7 +198,7 @@ Le mot de passe initial fait au moins 12 caractères. Le changement exige `motDe
 }
 ```
 
-`type` : `DEVOIR`, `COMPOSITION`, `INTERROGATION`. L'enseignant enregistré est celui de l'affectation. Un enseignant ne peut pas désigner un collègue.
+`type` : `DEVOIR`, `COMPOSITION`, `INTERROGATION`. L'enseignant enregistré est celui de l'affectation. Un enseignant ne peut pas désigner un collègue. Changer `noteMax` alors que des notes existent : `409`, valeur inchangée. Renvoyer le même `noteMax`, ou modifier le libellé ou le coefficient, reste accepté. Un changement effectif de `noteMax` ou de coefficient est journalisé.
 
 ### Notes
 
@@ -251,7 +251,7 @@ Statistiques : `computeStatistics` sur les moyennes déjà publiées. La répons
 
 | Méthode | Route | Accès |
 | --- | --- | --- |
-| GET | `/api/audit` | ADMIN. Créations, modifications, suppressions et validations de notes, connexions, déconnexions, refus `403`. Horodatage UTC. Pas de mot de passe |
+| GET | `/api/audit` | ADMIN. Notes, connexions, déconnexions, refus `403`, comptes (création, rôle, activation), mots de passe réinitialisés sans valeur ni jeton, affectations, barèmes (note maximale, coefficients), états d'année. Horodatage UTC. |
 | GET | `/api/health` | public, `{ "status": "ok" }`, aucune donnée métier |
 
 Le journal n'est pas modifiable par l'API. Conservation visée : 12 mois, les lignes restent en base au redéploiement. Il n'y a pas de route de réinitialisation de mot de passe.

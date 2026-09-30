@@ -5,6 +5,7 @@ import { assertSearchRate, assertWriteRate } from "@/lib/auth/rate-limit";
 import { getDb } from "./db";
 import { ApiError, forbidden, notFound } from "./errors";
 import { likePattern, optionalUuid, pagination, searchParams, searchQuery, versionOf } from "./query";
+import { auditPour, writeAudit } from "./audit";
 import { createEvaluationSchema, parseBody, patchEvaluationSchema } from "./schemas";
 import {
   canReadClassSubject,
@@ -216,21 +217,56 @@ export async function updateEvaluation(session: SessionUser, id: string, body: u
       return refuse(session, "PATCH", "evaluation", id, "Vous n'êtes pas affecté à cette classe et cette matière.");
     }
   }
-  const [row] = await db
-    .update(evaluation)
-    .set({
-      classeId: nextClasse,
-      matiereId: nextMatiere,
-      periodeId: input.periodeId ?? current.periodeId,
-      enseignantId: current.enseignantId,
-      type: input.type ?? current.type,
-      libelle: input.libelle ?? current.libelle,
-      date: input.date ?? current.date,
-      noteMax: input.noteMax ?? current.noteMax,
-      coefficient: input.coefficient ?? current.coefficient,
-    })
-    .where(eq(evaluation.id, id))
-    .returning();
+  const row = await db.transaction(async (tx) => {
+    const [locked] = await tx.select().from(evaluation).where(eq(evaluation.id, id)).limit(1).for("update");
+    if (!locked) throw notFound("Évaluation introuvable.");
+    const noteMax = input.noteMax ?? locked.noteMax;
+    const coefficient = input.coefficient ?? locked.coefficient;
+    const noteMaxChange = Number(noteMax) !== Number(locked.noteMax);
+    const coefficientChange = Number(coefficient) !== Number(locked.coefficient);
+    if (noteMaxChange) {
+      const [{ total }] = await tx.select({ total: count() }).from(note).where(eq(note.evaluationId, id));
+      if (total > 0) {
+        throw new ApiError(409, "CONFLIT", "Impossible de modifier la note maximale tant que des notes existent.");
+      }
+    }
+    const [updated] = await tx
+      .update(evaluation)
+      .set({
+        classeId: input.classeId ?? locked.classeId,
+        matiereId: input.matiereId ?? locked.matiereId,
+        periodeId: input.periodeId ?? locked.periodeId,
+        enseignantId: locked.enseignantId,
+        type: input.type ?? locked.type,
+        libelle: input.libelle ?? locked.libelle,
+        date: input.date ?? locked.date,
+        noteMax,
+        coefficient,
+      })
+      .where(eq(evaluation.id, id))
+      .returning();
+    if (noteMaxChange || coefficientChange) {
+      await writeAudit(
+        auditPour(session, {
+          type: "BAREME_MODIFICATION",
+          resultat: "200",
+          action: "PATCH",
+          cibleType: "evaluation",
+          cibleId: updated.id,
+          ancienneValeur: JSON.stringify({
+            ...(noteMaxChange ? { noteMax: locked.noteMax } : {}),
+            ...(coefficientChange ? { coefficient: locked.coefficient } : {}),
+          }),
+          nouvelleValeur: JSON.stringify({
+            ...(noteMaxChange ? { noteMax: updated.noteMax } : {}),
+            ...(coefficientChange ? { coefficient: updated.coefficient } : {}),
+          }),
+        }),
+        tx,
+      );
+    }
+    return updated;
+  });
   return publicEvaluation(row);
 }
 

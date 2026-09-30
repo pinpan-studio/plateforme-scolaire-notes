@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, ilike, inArray, or } from "drizzle-orm";
-import { classe, eleve, inscription, note } from "@/db/schema";
+import { classe, eleve, evaluation, inscription, note } from "@/db/schema";
 import { canWriteStudents, type SessionUser } from "@/lib/auth/permissions";
 import { getDb } from "./db";
 import { ApiError, forbidden, notFound } from "./errors";
@@ -244,6 +244,8 @@ export async function updateEleve(session: SessionUser, id: string, body: unknow
   const statut = statutFiche(input.statut, current.statut);
 
   return db.transaction(async (tx) => {
+    const [locked] = await tx.select({ id: eleve.id }).from(eleve).where(eq(eleve.id, id)).limit(1).for("update");
+    if (!locked) throw notFound("Élève introuvable.");
     const [student] = await tx
       .update(eleve)
       .set({
@@ -271,8 +273,19 @@ export async function updateEleve(session: SessionUser, id: string, body: unknow
         .select()
         .from(inscription)
         .where(and(eq(inscription.eleveId, id), eq(inscription.anneeScolaireId, classeRow.anneeScolaireId)))
-        .limit(1);
+        .limit(1)
+        .for("update");
       if (existing) {
+        if (existing.classeId !== classeRow.id) {
+          const [{ total }] = await tx
+            .select({ total: count() })
+            .from(note)
+            .innerJoin(evaluation, eq(note.evaluationId, evaluation.id))
+            .where(and(eq(note.eleveId, id), eq(evaluation.classeId, existing.classeId)));
+          if (total > 0) {
+            throw new ApiError(409, "CONFLIT", "Impossible de déplacer un élève qui possède déjà des notes.");
+          }
+        }
         const [updated] = await tx
           .update(inscription)
           .set({ classeId: classeRow.id, statut: inscriptionStatut(statut) })

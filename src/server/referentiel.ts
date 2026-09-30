@@ -40,7 +40,7 @@ import {
   patchPeriodeSchema,
   patchUtilisateurSchema,
 } from "./schemas";
-import { listAudit, writeAudit } from "./audit";
+import { auditPour, listAudit, writeAudit } from "./audit";
 import { loadScope } from "./scope";
 
 function assertReadReferential(session: SessionUser) {
@@ -87,40 +87,81 @@ export async function createAnnee(session: SessionUser, body: unknown) {
   const input = parseBody(createAnneeSchema, body);
   const [school] = await getDb().select({ id: etablissement.id }).from(etablissement).limit(1);
   if (!school) throw notFound("Établissement introuvable.");
-  const [row] = await getDb()
-    .insert(anneeScolaire)
-    .values({
-      etablissementId: school.id,
-      libelle: input.libelle,
-      dateDebut: input.dateDebut,
-      dateFin: input.dateFin,
-      statut: input.statut ?? "PREPARATION",
-    })
-    .returning();
+  const statut = input.statut ?? "PREPARATION";
+  const [row] = await getDb().transaction(async (tx) => {
+    const [created] = await tx
+      .insert(anneeScolaire)
+      .values({
+        etablissementId: school.id,
+        libelle: input.libelle,
+        dateDebut: input.dateDebut,
+        dateFin: input.dateFin,
+        statut,
+      })
+      .returning();
+    await writeAudit(
+      auditPour(session, {
+        type: "ANNEE_STATUT",
+        resultat: "201",
+        action: "POST",
+        cibleType: "annee_scolaire",
+        cibleId: created.id,
+        nouvelleValeur: created.statut,
+      }),
+      tx,
+    );
+    return [created];
+  });
   return row;
 }
 
 export async function updateAnnee(session: SessionUser, id: string, body: unknown) {
   if (!canWriteYear(session.role)) throw forbidden();
   const input = parseBody(patchAnneeSchema, body);
-  const db = getDb();
-  const [current] = await db.select().from(anneeScolaire).where(eq(anneeScolaire.id, id)).limit(1);
-  if (!current) throw notFound("Année introuvable.");
   if (input.dateDebut && input.dateFin && input.dateFin <= input.dateDebut) {
     throw new ApiError(422, "VALIDATION", "La fin est postérieure au début.", [
       { path: "dateFin", message: "La fin est postérieure au début." },
     ]);
   }
-  const [row] = await db
-    .update(anneeScolaire)
-    .set({
-      libelle: input.libelle ?? current.libelle,
-      dateDebut: input.dateDebut ?? current.dateDebut,
-      dateFin: input.dateFin ?? current.dateFin,
-      statut: input.statut ?? current.statut,
-    })
-    .where(eq(anneeScolaire.id, id))
-    .returning();
+  const [row] = await getDb().transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(anneeScolaire)
+      .where(eq(anneeScolaire.id, id))
+      .limit(1)
+      .for("update");
+    if (!current) throw notFound("Année introuvable.");
+    const statut = input.statut ?? current.statut;
+    const reouverture = current.statut === "CLOTUREE" && statut !== "CLOTUREE";
+    if (reouverture && session.role !== "ADMIN") {
+      throw forbidden("Seule l'administration peut rouvrir une année clôturée.");
+    }
+    const [updated] = await tx
+      .update(anneeScolaire)
+      .set({
+        libelle: input.libelle ?? current.libelle,
+        dateDebut: input.dateDebut ?? current.dateDebut,
+        dateFin: input.dateFin ?? current.dateFin,
+        statut,
+      })
+      .where(eq(anneeScolaire.id, id))
+      .returning();
+    if (current.statut !== updated.statut) {
+      await writeAudit(
+        auditPour(session, {
+          type: "ANNEE_STATUT",
+          resultat: "200",
+          action: "PATCH",
+          cibleType: "annee_scolaire",
+          cibleId: updated.id,
+          ancienneValeur: current.statut,
+          nouvelleValeur: updated.statut,
+        }),
+        tx,
+      );
+    }
+    return [updated];
+  });
   return row;
 }
 
@@ -215,19 +256,35 @@ export async function createMatiere(session: SessionUser, body: unknown) {
 export async function updateMatiere(session: SessionUser, id: string, body: unknown) {
   assertWriteReferential(session);
   const input = parseBody(patchMatiereSchema, body);
-  const db = getDb();
-  const [current] = await db.select().from(matiere).where(eq(matiere.id, id)).limit(1);
-  if (!current) throw notFound("Matière introuvable.");
-  const [row] = await db
-    .update(matiere)
-    .set({
-      code: input.code ?? current.code,
-      nom: input.nom ?? current.nom,
-      coefficient: input.coefficient ?? current.coefficient,
-      niveauId: input.niveauId === undefined ? current.niveauId : input.niveauId,
-    })
-    .where(eq(matiere.id, id))
-    .returning();
+  const [row] = await getDb().transaction(async (tx) => {
+    const [current] = await tx.select().from(matiere).where(eq(matiere.id, id)).limit(1).for("update");
+    if (!current) throw notFound("Matière introuvable.");
+    const [updated] = await tx
+      .update(matiere)
+      .set({
+        code: input.code ?? current.code,
+        nom: input.nom ?? current.nom,
+        coefficient: input.coefficient ?? current.coefficient,
+        niveauId: input.niveauId === undefined ? current.niveauId : input.niveauId,
+      })
+      .where(eq(matiere.id, id))
+      .returning();
+    if (Number(current.coefficient) !== Number(updated.coefficient)) {
+      await writeAudit(
+        auditPour(session, {
+          type: "BAREME_MODIFICATION",
+          resultat: "200",
+          action: "PATCH",
+          cibleType: "matiere",
+          cibleId: updated.id,
+          ancienneValeur: JSON.stringify({ coefficient: current.coefficient }),
+          nouvelleValeur: JSON.stringify({ coefficient: updated.coefficient }),
+        }),
+        tx,
+      );
+    }
+    return [updated];
+  });
   return row;
 }
 
@@ -362,39 +419,80 @@ export async function listAffectations(session: SessionUser, request: Request) {
 export async function createAffectation(session: SessionUser, body: unknown) {
   assertWriteReferential(session);
   const input = parseBody(createAffectationSchema, body);
-  const [classeRow] = await getDb().select().from(classe).where(eq(classe.id, input.classeId)).limit(1);
-  if (!classeRow) throw notFound("Classe introuvable.");
-  const [row] = await getDb()
-    .insert(affectationEnseignant)
-    .values({
-      enseignantId: input.enseignantId,
-      classeId: input.classeId,
-      matiereId: input.matiereId,
-      anneeScolaireId: classeRow.anneeScolaireId,
-    })
-    .returning();
+  const [row] = await getDb().transaction(async (tx) => {
+    const [classeRow] = await tx.select().from(classe).where(eq(classe.id, input.classeId)).limit(1);
+    if (!classeRow) throw notFound("Classe introuvable.");
+    const [created] = await tx
+      .insert(affectationEnseignant)
+      .values({
+        enseignantId: input.enseignantId,
+        classeId: input.classeId,
+        matiereId: input.matiereId,
+        anneeScolaireId: classeRow.anneeScolaireId,
+      })
+      .returning();
+    await writeAudit(
+      auditPour(session, {
+        type: "AFFECTATION_CREATION",
+        resultat: "201",
+        action: "POST",
+        cibleType: "affectation",
+        cibleId: created.id,
+        nouvelleValeur: JSON.stringify({
+          enseignantId: created.enseignantId,
+          classeId: created.classeId,
+          matiereId: created.matiereId,
+          anneeScolaireId: created.anneeScolaireId,
+        }),
+      }),
+      tx,
+    );
+    return [created];
+  });
   return row;
 }
 
 export async function deleteAffectation(session: SessionUser, id: string) {
   assertWriteReferential(session);
-  const db = getDb();
-  const [row] = await db.select().from(affectationEnseignant).where(eq(affectationEnseignant.id, id)).limit(1);
-  if (!row) throw notFound("Affectation introuvable.");
-  const [{ total }] = await db
-    .select({ total: count() })
-    .from(evaluation)
-    .where(
-      and(
-        eq(evaluation.classeId, row.classeId),
-        eq(evaluation.matiereId, row.matiereId),
-        eq(evaluation.enseignantId, row.enseignantId),
-      ),
+  await getDb().transaction(async (tx) => {
+    const [row] = await tx
+      .select()
+      .from(affectationEnseignant)
+      .where(eq(affectationEnseignant.id, id))
+      .limit(1)
+      .for("update");
+    if (!row) throw notFound("Affectation introuvable.");
+    const [{ total }] = await tx
+      .select({ total: count() })
+      .from(evaluation)
+      .where(
+        and(
+          eq(evaluation.classeId, row.classeId),
+          eq(evaluation.matiereId, row.matiereId),
+          eq(evaluation.enseignantId, row.enseignantId),
+        ),
+      );
+    if (total > 0) {
+      throw new ApiError(409, "CONFLIT", "Retirez les évaluations de cette affectation avant de la supprimer.");
+    }
+    await tx.delete(affectationEnseignant).where(eq(affectationEnseignant.id, id));
+    await writeAudit(
+      auditPour(session, {
+        type: "AFFECTATION_SUPPRESSION",
+        resultat: "204",
+        action: "DELETE",
+        cibleType: "affectation",
+        cibleId: id,
+        ancienneValeur: JSON.stringify({
+          enseignantId: row.enseignantId,
+          classeId: row.classeId,
+          matiereId: row.matiereId,
+          anneeScolaireId: row.anneeScolaireId,
+        }),
+      }),
+      tx,
     );
-  if (total > 0) {
-    throw new ApiError(409, "CONFLIT", "Retirez les évaluations de cette affectation avant de la supprimer.");
-  }
-  await db.delete(affectationEnseignant).where(eq(affectationEnseignant.id, id));
+  });
 }
 
 function publicUtilisateur(row: {
@@ -438,26 +536,40 @@ export async function createUtilisateur(session: SessionUser, body: unknown) {
   assertWriteReferential(session);
   const input = parseBody(createUtilisateurSchema, body);
   const motDePasseHash = await hashPassword(input.motDePasse);
-  const [row] = await getDb()
-    .insert(utilisateur)
-    .values({
-      email: input.email,
-      motDePasseHash,
-      roleCode: input.roleCode,
-      enseignantId: input.enseignantId ?? null,
-      prenom: input.prenom,
-      nom: input.nom,
-      actif: true,
-    })
-    .returning({
-      id: utilisateur.id,
-      email: utilisateur.email,
-      roleCode: utilisateur.roleCode,
-      enseignantId: utilisateur.enseignantId,
-      prenom: utilisateur.prenom,
-      nom: utilisateur.nom,
-      actif: utilisateur.actif,
-    });
+  const [row] = await getDb().transaction(async (tx) => {
+    const [created] = await tx
+      .insert(utilisateur)
+      .values({
+        email: input.email,
+        motDePasseHash,
+        roleCode: input.roleCode,
+        enseignantId: input.enseignantId ?? null,
+        prenom: input.prenom,
+        nom: input.nom,
+        actif: true,
+      })
+      .returning({
+        id: utilisateur.id,
+        email: utilisateur.email,
+        roleCode: utilisateur.roleCode,
+        enseignantId: utilisateur.enseignantId,
+        prenom: utilisateur.prenom,
+        nom: utilisateur.nom,
+        actif: utilisateur.actif,
+      });
+    await writeAudit(
+      auditPour(session, {
+        type: "UTILISATEUR_CREATION",
+        resultat: "201",
+        action: "POST",
+        cibleType: "utilisateur",
+        cibleId: created.id,
+        nouvelleValeur: JSON.stringify({ email: created.email, role: created.roleCode, actif: created.actif }),
+      }),
+      tx,
+    );
+    return [created];
+  });
   return publicUtilisateur(row);
 }
 
@@ -468,6 +580,7 @@ export async function updateUtilisateur(session: SessionUser, id: string, body: 
   const [current] = await db.select().from(utilisateur).where(eq(utilisateur.id, id)).limit(1);
   if (!current) throw notFound("Utilisateur introuvable.");
   let motDePasseHash = current.motDePasseHash;
+  const motDePasseChange = Boolean(input.motDePasse);
   if (input.motDePasse) {
     if (!input.motDePasseActuel) {
       throw new ApiError(403, "FORBIDDEN", "Le mot de passe actuel est requis.");
@@ -476,28 +589,59 @@ export async function updateUtilisateur(session: SessionUser, id: string, body: 
     if (!ok) throw new ApiError(403, "FORBIDDEN", "Le mot de passe actuel est requis.");
     motDePasseHash = await hashPassword(input.motDePasse);
   }
-  const [row] = await db
-    .update(utilisateur)
-    .set({
-      email: input.email ?? current.email,
-      prenom: input.prenom ?? current.prenom,
-      nom: input.nom ?? current.nom,
-      actif: input.actif ?? current.actif,
-      roleCode: input.roleCode ?? current.roleCode,
-      enseignantId: input.enseignantId === undefined ? current.enseignantId : input.enseignantId,
-      motDePasseHash,
-      ...(input.motDePasse ? { sessionVersion: sql`${utilisateur.sessionVersion} + 1` } : {}),
-    })
-    .where(eq(utilisateur.id, id))
-    .returning({
-      id: utilisateur.id,
-      email: utilisateur.email,
-      roleCode: utilisateur.roleCode,
-      enseignantId: utilisateur.enseignantId,
-      prenom: utilisateur.prenom,
-      nom: utilisateur.nom,
-      actif: utilisateur.actif,
-    });
+  const [row] = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(utilisateur)
+      .set({
+        email: input.email ?? current.email,
+        prenom: input.prenom ?? current.prenom,
+        nom: input.nom ?? current.nom,
+        actif: input.actif ?? current.actif,
+        roleCode: input.roleCode ?? current.roleCode,
+        enseignantId: input.enseignantId === undefined ? current.enseignantId : input.enseignantId,
+        motDePasseHash,
+        ...(motDePasseChange ? { sessionVersion: sql`${utilisateur.sessionVersion} + 1` } : {}),
+      })
+      .where(eq(utilisateur.id, id))
+      .returning({
+        id: utilisateur.id,
+        email: utilisateur.email,
+        roleCode: utilisateur.roleCode,
+        enseignantId: utilisateur.enseignantId,
+        prenom: utilisateur.prenom,
+        nom: utilisateur.nom,
+        actif: utilisateur.actif,
+      });
+    if (current.roleCode !== updated.roleCode || current.actif !== updated.actif) {
+      await writeAudit(
+        auditPour(session, {
+          type: "UTILISATEUR_MODIFICATION",
+          resultat: "200",
+          action: "PATCH",
+          cibleType: "utilisateur",
+          cibleId: updated.id,
+          ancienneValeur: JSON.stringify({ role: current.roleCode, actif: current.actif }),
+          nouvelleValeur: JSON.stringify({ role: updated.roleCode, actif: updated.actif }),
+        }),
+        tx,
+      );
+    }
+    if (motDePasseChange) {
+      await writeAudit(
+        auditPour(session, {
+          type: "MOT_DE_PASSE",
+          resultat: "200",
+          action: "PATCH",
+          cibleType: "utilisateur",
+          cibleId: updated.id,
+          ancienneValeur: "defini",
+          nouvelleValeur: "reinitialise",
+        }),
+        tx,
+      );
+    }
+    return [updated];
+  });
   return publicUtilisateur(row);
 }
 
@@ -508,18 +652,24 @@ export async function changerMotDePasse(session: SessionUser, body: unknown) {
   if (!current || !current.actif) throw forbidden("Compte indisponible.");
   const ok = await verifyPassword(input.motDePasseActuel, current.motDePasseHash);
   if (!ok) throw new ApiError(403, "FORBIDDEN", "Le mot de passe actuel est requis.");
-  await db
-    .update(utilisateur)
-    .set({ motDePasseHash: await hashPassword(input.motDePasse), sessionVersion: sql`${utilisateur.sessionVersion} + 1` })
-    .where(eq(utilisateur.id, current.id));
-  await writeAudit({
-    type: "MOT_DE_PASSE",
-    acteurId: session.id,
-    identifiant: session.email,
-    resultat: "200",
-    action: "PATCH",
-    cibleType: "utilisateur",
-    cibleId: current.id,
+  const motDePasseHash = await hashPassword(input.motDePasse);
+  await db.transaction(async (tx) => {
+    await tx
+      .update(utilisateur)
+      .set({ motDePasseHash, sessionVersion: sql`${utilisateur.sessionVersion} + 1` })
+      .where(eq(utilisateur.id, current.id));
+    await writeAudit(
+      auditPour(session, {
+        type: "MOT_DE_PASSE",
+        resultat: "200",
+        action: "PATCH",
+        cibleType: "utilisateur",
+        cibleId: current.id,
+        ancienneValeur: "defini",
+        nouvelleValeur: "reinitialise",
+      }),
+      tx,
+    );
   });
 }
 
@@ -529,21 +679,27 @@ export async function definirMotDePasseTemporaire(session: SessionUser, id: stri
   const [current] = await db.select().from(utilisateur).where(eq(utilisateur.id, id)).limit(1);
   if (!current) throw notFound("Utilisateur introuvable.");
   const motDePasseTemporaire = `Tmp-${randomBytes(9).toString("base64url")}`;
-  await db
-    .update(utilisateur)
-    .set({
-      motDePasseHash: await hashPassword(motDePasseTemporaire),
-      sessionVersion: sql`${utilisateur.sessionVersion} + 1`,
-    })
-    .where(eq(utilisateur.id, id));
-  await writeAudit({
-    type: "MOT_DE_PASSE",
-    acteurId: session.id,
-    identifiant: session.email,
-    resultat: "200",
-    action: "POST",
-    cibleType: "utilisateur",
-    cibleId: id,
+  const motDePasseHash = await hashPassword(motDePasseTemporaire);
+  await db.transaction(async (tx) => {
+    await tx
+      .update(utilisateur)
+      .set({
+        motDePasseHash,
+        sessionVersion: sql`${utilisateur.sessionVersion} + 1`,
+      })
+      .where(eq(utilisateur.id, id));
+    await writeAudit(
+      auditPour(session, {
+        type: "MOT_DE_PASSE",
+        resultat: "200",
+        action: "POST",
+        cibleType: "utilisateur",
+        cibleId: id,
+        ancienneValeur: "defini",
+        nouvelleValeur: "reinitialise",
+      }),
+      tx,
+    );
   });
   return { motDePasseTemporaire };
 }
